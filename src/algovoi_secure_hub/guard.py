@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """AlgoVoi Secure Hub — Guard (runtime anomaly detection).
 
 Tracks per-tenant request rates with a one-minute sliding window and an
@@ -42,6 +43,17 @@ _CIRCUIT_TRIP: int = int(os.environ.get("AHUB_GUARD_CIRCUIT_TRIP", "5"))
 _CIRCUIT_RESET_S: int = int(os.environ.get("AHUB_GUARD_CIRCUIT_RESET_S", "300"))
 _EWMA_ALPHA: float = float(os.environ.get("AHUB_GUARD_EWMA_ALPHA", "0.1"))
 _MAX_GUARD_TENANTS: int = int(os.environ.get("AHUB_GUARD_MAX_TENANTS", "50000"))
+
+if not (0.0 < _ANOMALY_FACTOR <= 100.0):
+    raise RuntimeError("AHUB_GUARD_ANOMALY_FACTOR must be between 0 (exclusive) and 100")
+if not (1 <= _CIRCUIT_TRIP <= 1000):
+    raise RuntimeError("AHUB_GUARD_CIRCUIT_TRIP must be between 1 and 1000")
+if not (1 <= _CIRCUIT_RESET_S <= 86400):
+    raise RuntimeError("AHUB_GUARD_CIRCUIT_RESET_S must be between 1 and 86400")
+if not (0.0 < _EWMA_ALPHA <= 1.0):
+    raise RuntimeError("AHUB_GUARD_EWMA_ALPHA must be between 0 (exclusive) and 1 (inclusive)")
+if not (1 <= _MAX_GUARD_TENANTS <= 1_000_000):
+    raise RuntimeError("AHUB_GUARD_MAX_TENANTS must be between 1 and 1,000,000")
 
 _GUARD_LOCK = threading.Lock()
 
