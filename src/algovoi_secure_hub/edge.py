@@ -38,6 +38,13 @@ _GEO_BLOCKLIST: frozenset[str] = (
 
 EDGE_ENABLED: bool = bool(_EDGE_TOKEN or _EDGE_RPM or _GEO_BLOCKLIST)
 
+if _GEO_BLOCKLIST and not _EDGE_TOKEN:
+    raise RuntimeError(
+        "AHUB_EDGE_GEO_BLOCK requires AHUB_EDGE_TOKEN to be set. "
+        "Without a pre-auth token any client can bypass the geo blocklist "
+        "by omitting or spoofing the X-Country-Code header."
+    )
+
 _EDGE_LOCK = threading.Lock()
 # {ip: (window_start_monotonic, count_in_window)}
 _EDGE_BUCKETS: dict[str, tuple[float, int]] = {}

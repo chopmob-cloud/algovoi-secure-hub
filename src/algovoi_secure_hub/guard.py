@@ -41,6 +41,7 @@ _ANOMALY_FACTOR: float = float(os.environ.get("AHUB_GUARD_ANOMALY_FACTOR", "5.0"
 _CIRCUIT_TRIP: int = int(os.environ.get("AHUB_GUARD_CIRCUIT_TRIP", "5"))
 _CIRCUIT_RESET_S: int = int(os.environ.get("AHUB_GUARD_CIRCUIT_RESET_S", "300"))
 _EWMA_ALPHA: float = float(os.environ.get("AHUB_GUARD_EWMA_ALPHA", "0.1"))
+_MAX_GUARD_TENANTS: int = int(os.environ.get("AHUB_GUARD_MAX_TENANTS", "50000"))
 
 _GUARD_LOCK = threading.Lock()
 
@@ -94,6 +95,13 @@ def _check_guard(tenant: str) -> bool:
             else:
                 _STATS["circuit_blocked"] += 1
                 return False
+
+        # Evict oldest entry when the tenant table is at capacity and this is a new tenant.
+        if tenant not in _WINDOW and len(_WINDOW) >= _MAX_GUARD_TENANTS:
+            oldest = min(_WINDOW, key=lambda k: _WINDOW[k][0])
+            for _d in (_WINDOW, _BASELINE, _BASELINE_VAR, _ANOMALY_SCORE):
+                _d.pop(oldest, None)
+            _CIRCUIT_OPEN.pop(oldest, None)
 
         # Fixed operator cap overrides EWMA logic
         if tenant in _POLICY_CAP:
