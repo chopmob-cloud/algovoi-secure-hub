@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Default web control panel for the AlgoVoi Secure Hub.
 
 A single self-contained HTML page (no build step, no external assets) that renders
@@ -79,8 +80,8 @@ button:hover{{opacity:.88}}.err{{color:var(--bad);font-size:12px;margin-top:8px}
 
 
 def render_panel(*, version: str, issuers: list[dict], services: list[dict],
-                 substrates: list[dict], audit_entries: int, policy: dict, all_up: bool,
-                 keystone_steps: list[dict] | None = None) -> str:
+                substrates: list[dict], audit_entries: int, policy: dict, all_up: bool,
+                keystone_steps: list[dict] | None = None) -> str:
     e = html.escape
     targets = [*services, *substrates]
     up_n = sum(1 for target in targets if target.get("up"))
