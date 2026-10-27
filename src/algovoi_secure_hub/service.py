@@ -688,11 +688,7 @@ def _require_service_registration(authorization: str | None, name: str | None = 
             raise HTTPException(status_code=403, detail="addon registration requires a scoped registration token")
         return True
     if type_ != "addon":
-        if _REGISTRATION_TOKEN and hmac.compare_digest(token, _REGISTRATION_TOKEN) and name == _REGISTRATION_NAME:
-            return False
-        if name and name in _REGISTRATION_TOKENS and hmac.compare_digest(token, _REGISTRATION_TOKENS[name]):
-            return False
-        raise HTTPException(status_code=401, detail="scoped registration token is not bound to this service")
+        raise HTTPException(status_code=403, detail="scoped registration tokens may only register type 'addon'")
     if _REGISTRATION_TOKEN and hmac.compare_digest(token, _REGISTRATION_TOKEN) and name == _REGISTRATION_NAME:
         return False
     if name and name in _REGISTRATION_TOKENS and hmac.compare_digest(token, _REGISTRATION_TOKENS[name]):
@@ -878,9 +874,11 @@ async def _login_gate(request, call_next):
     if (not authenticated and request.method == "POST" and request.url.path == "/v1/services"
             and request.headers.get("authorization", "").startswith("Bearer ")):
         _tok = request.headers["authorization"][7:].strip()
-        _tok_ok = bool(_REGISTRATION_TOKEN) and hmac.compare_digest(_tok, _REGISTRATION_TOKEN)
-        # Iterate all values unconditionally to prevent timing side-channel on dict membership.
-        _tok_ok = _tok_ok or any(hmac.compare_digest(_tok, v) for v in _REGISTRATION_TOKENS.values())
+        # Compare against every token unconditionally (no short-circuit) to avoid timing
+        # side-channels that reveal how many or which tokens are configured.
+        _results = [hmac.compare_digest(_tok, _REGISTRATION_TOKEN)] if _REGISTRATION_TOKEN else []
+        _results += [hmac.compare_digest(_tok, v) for v in _REGISTRATION_TOKENS.values()]
+        _tok_ok = any(_results)
         if _tok_ok:
             authenticated = True
     if authenticated:
@@ -1394,6 +1392,7 @@ def _probe_address_allowed(ip: ipaddress._BaseAddress) -> bool:
     )
     return not (
         ip.is_link_local
+        or ip.is_loopback
         or ip.is_multicast
         or ip.is_unspecified
         or ip.is_reserved
@@ -1635,7 +1634,7 @@ async def set_keystone_attestor(body: KeystoneAttestorIn,
                                 authorization: Annotated[str | None, Header()] = None) -> dict:
     """Register the keystone attestor key the hub distributes for pinning (admin only). This is
     the federation attestor-key-trust binding: keystone evidence verifies as AlgoVoi across every
-    bridged service that pins this key, and it shows in /v1/posture under "keystone"."""
+    bridged service that pins this key, and it shows in /v1/posture under \"keystone\"."""
     global _keystone_attestor
     _require_admin(authorization)
     _require_audit_integrity()
