@@ -1,0 +1,24 @@
+name: Add SPDX header to service.py
+on:
+  workflow_dispatch:
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepend SPDX header if missing
+        run: |
+          FILE=src/algovoi_secure_hub/service.py
+          if ! head -1 "$FILE" | grep -q 'SPDX-License-Identifier'; then
+            echo '# SPDX-License-Identifier: Apache-2.0' | cat - "$FILE" > /tmp/service_patched.py
+            mv /tmp/service_patched.py "$FILE"
+            git config user.name "chopmob"
+            git config user.email "chopmob@gmail.com"
+            git add "$FILE"
+            git commit -m "chore: add SPDX-License-Identifier header to service.py"
+            git push
+          else
+            echo "SPDX header already present, skipping."
+          fi
