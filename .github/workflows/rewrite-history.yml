@@ -1,0 +1,40 @@
+name: Rewrite history - remove Claude attribution
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install git-filter-repo
+        run: pip install git-filter-repo
+
+      - name: Rewrite commits
+        run: |
+          git filter-repo --force --commit-callback '
+          import re
+          if commit.author_email == b"noreply@anthropic.com":
+              commit.author_name = b"AlgoVoi (Christopher Hopley)"
+              commit.author_email = b"chopmob@gmail.com"
+              commit.committer_name = b"AlgoVoi (Christopher Hopley)"
+              commit.committer_email = b"chopmob@gmail.com"
+          msg = commit.message.decode("utf-8", errors="replace")
+          msg = re.sub(r"\nCo-[Aa]uthored-[Bb]y: Claude[^\n]*", "", msg)
+          msg = re.sub(r"\nClaude-Session: [^\n]*", "", msg)
+          msg = re.sub(r"\nCo-authored-by: Claude[^\n]*", "", msg)
+          msg = msg.rstrip() + "\n"
+          commit.message = msg.encode("utf-8")
+          '
+
+      - name: Push rewritten history
+        run: |
+          git remote add upstream https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push upstream HEAD:main --force
