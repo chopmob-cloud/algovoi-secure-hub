@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """AlgoVoi Secure Hub.
 
 A lean, self-hosted control plane for the substrate-2 federation + ZK-proof
