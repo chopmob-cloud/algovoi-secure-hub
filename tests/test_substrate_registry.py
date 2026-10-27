@@ -203,20 +203,32 @@ def test_package_version_is_consistent():
     assert __version__ == "0.3.5"
 
 
-def test_pinned_probe_preserves_base_url_path_prefix():
-    from algovoi_secure_hub.service import _resolve_posture_target
+def test_pinned_probe_preserves_base_url_path_prefix(monkeypatch):
+    import socket as _socket
+    from algovoi_secure_hub import service
 
-    target = _resolve_posture_target("http://127.0.0.1:13/prefix", "/health")
+    monkeypatch.setattr(
+        _socket,
+        "getaddrinfo",
+        lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, _socket.IPPROTO_TCP, "", ("10.0.0.1", 13))],
+    )
+    target = service._resolve_posture_target("http://svc-internal:13/prefix", "/health")
     assert target is not None
     assert target[0].endswith("/prefix/health")
 
 
-def test_pinned_probe_preserves_explicit_port_in_host_header():
-    from algovoi_secure_hub.service import _resolve_posture_target
+def test_pinned_probe_preserves_explicit_port_in_host_header(monkeypatch):
+    import socket as _socket
+    from algovoi_secure_hub import service
 
-    target = _resolve_posture_target("http://127.0.0.1:8092/prefix", "/health")
+    monkeypatch.setattr(
+        _socket,
+        "getaddrinfo",
+        lambda *a, **kw: [(_socket.AF_INET, _socket.SOCK_STREAM, _socket.IPPROTO_TCP, "", ("10.0.0.2", 8092))],
+    )
+    target = service._resolve_posture_target("http://svc-internal:8092/prefix", "/health")
     assert target is not None
-    assert target[1] == "127.0.0.1:8092"
+    assert target[1] == "svc-internal:8092"
 
 
 def test_audit_chain_verification_detects_tampering():
@@ -325,10 +337,19 @@ def test_malformed_database_import_serves_degraded_health(tmp_path):
         "AHUB_DATA_DIR": str(data_dir),
         "AHUB_ADMIN_TOKEN": secrets.token_urlsafe(32),
         "AHUB_AUDIT_KEY": secrets.token_urlsafe(32),
-        "PYTHONPATH": f"{root / 'src'};{root}",
+        "PYTHONPATH": f"{root / 'src'}:{root}",
     })
+    stub = (
+        "import sys, types; "
+        "_m=types.ModuleType('substrate2'); "
+        "_pb=types.ModuleType('substrate2.policy_binding'); "
+        "_pb.policy_ref=lambda d:'r'; _pb.policy_bound_ref=lambda s,p:'r'; "
+        "_m.policy_binding=_pb; "
+        "sys.modules['substrate2']=_m; sys.modules['substrate2.policy_binding']=_pb; "
+    )
     code = (
-        "from fastapi.testclient import TestClient; "
+        stub
+        + "from fastapi.testclient import TestClient; "
         "from app.main import app; "
         "r=TestClient(app).get('/health'); "
         "assert r.status_code == 503 and r.json()['audit_integrity'] is False"
@@ -402,10 +423,19 @@ def test_parseable_wrong_schema_import_serves_degraded_health(tmp_path):
         "AHUB_DATA_DIR": str(data_dir),
         "AHUB_ADMIN_TOKEN": secrets.token_urlsafe(32),
         "AHUB_AUDIT_KEY": secrets.token_urlsafe(32),
-        "PYTHONPATH": f"{root / 'src'};{root}",
+        "PYTHONPATH": f"{root / 'src'}:{root}",
     })
+    stub = (
+        "import sys, types; "
+        "_m=types.ModuleType('substrate2'); "
+        "_pb=types.ModuleType('substrate2.policy_binding'); "
+        "_pb.policy_ref=lambda d:'r'; _pb.policy_bound_ref=lambda s,p:'r'; "
+        "_m.policy_binding=_pb; "
+        "sys.modules['substrate2']=_m; sys.modules['substrate2.policy_binding']=_pb; "
+    )
     code = (
-        "from fastapi.testclient import TestClient; "
+        stub
+        + "from fastapi.testclient import TestClient; "
         "from app.main import app; "
         "r=TestClient(app).get('/health'); "
         "assert r.status_code == 503 and r.json()['audit_integrity'] is False"
