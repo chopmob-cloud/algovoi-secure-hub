@@ -1,0 +1,131 @@
+AlgoVoi Commercial License v1.0
+
+Copyright (c) 2026 AlgoVoi (chopmob-cloud). All Rights Reserved.
+
+This software and associated documentation files (the "Software") — the AlgoVoi
+Substrate-2 Control Plane: an issuer-trust hub and service bridge for the
+substrate-2 federation and ZK-proof services — are the exclusive intellectual
+property of AlgoVoi.
+
+───────────────────────────────────────────────────────────────────────────────
+1. EVALUATION GRANT
+───────────────────────────────────────────────────────────────────────────────
+
+Subject to the terms of this License, AlgoVoi grants you a limited,
+non-exclusive, non-transferable, non-sublicensable license to:
+
+  (a) download, install, and execute the Software solely for the purpose of
+      internal evaluation, testing, and non-commercial research; and
+
+  (b) read and reference the source code for the purpose of understanding
+      its technical design.
+
+The Evaluation Grant does not permit production use, commercial deployment,
+integration into a commercial product or service, or any use that directly
+or indirectly generates revenue.
+
+───────────────────────────────────────────────────────────────────────────────
+2. COMMERCIAL USE
+───────────────────────────────────────────────────────────────────────────────
+
+Any use of the Software beyond the Evaluation Grant — including but not
+limited to:
+
+  - deployment in a production environment;
+  - integration into a product, platform, or service offered to third parties;
+  - use within an organisation with annual gross revenue exceeding USD 50,000;
+  - incorporation into any commercial payment, identity, or credential system;
+
+requires a separate written Commercial License Agreement executed with
+AlgoVoi. To obtain a Commercial License, contact:
+
+  hello@algovoi.co.uk
+  https://algovoi.co.uk
+
+───────────────────────────────────────────────────────────────────────────────
+3. RESTRICTIONS
+───────────────────────────────────────────────────────────────────────────────
+
+Except as expressly permitted above, you may NOT:
+
+  (a) copy, modify, merge, publish, distribute, sublicense, or sell copies
+      of the Software or any portion thereof;
+
+  (b) create derivative works based on the Software;
+
+  (c) reverse-engineer, decompile, or disassemble the Software (to the
+      extent applicable law does not prohibit this restriction);
+
+  (d) remove or alter any copyright, trademark, or attribution notice in
+      the Software or its documentation;
+
+  (e) use the name "AlgoVoi", the AlgoVoi logo, or the names of its
+      contributors to endorse or promote products derived from the Software
+      without prior written consent;
+
+  (f) offer the Software or any substantial portion of it as a managed
+      service, hosted service, or API to third parties.
+
+───────────────────────────────────────────────────────────────────────────────
+4. INTELLECTUAL PROPERTY
+───────────────────────────────────────────────────────────────────────────────
+
+The issuer-trust hub design, the service-bridge and addon registration model,
+the multi-shape issuer-key resolution surface, and the HMAC-chained trust-audit
+procedure described in this Software are the proprietary intellectual property
+of AlgoVoi.
+
+AlgoVoi's participation in IETF processes does not constitute a waiver of any
+intellectual property rights, and no IETF publication or standardisation of any
+accompanying Internet-Drafts shall be construed as granting any license to
+implement or use the techniques described herein without a separate written
+agreement with AlgoVoi.
+
+───────────────────────────────────────────────────────────────────────────────
+5. PATENT RIGHTS
+───────────────────────────────────────────────────────────────────────────────
+
+No patent rights are granted under this License. Any use of patented methods
+or systems described in the Software requires a separate patent license from
+AlgoVoi.
+
+───────────────────────────────────────────────────────────────────────────────
+6. DISCLAIMER OF WARRANTIES
+───────────────────────────────────────────────────────────────────────────────
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL
+ALGOVOI BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM
+THE USE OF THE SOFTWARE.
+
+───────────────────────────────────────────────────────────────────────────────
+7. LIMITATION OF LIABILITY
+───────────────────────────────────────────────────────────────────────────────
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ALGOVOI'S TOTAL
+CUMULATIVE LIABILITY TO YOU FOR ANY CLAIMS ARISING OUT OF OR RELATED TO
+THIS LICENSE SHALL NOT EXCEED THE GREATER OF (a) THE AMOUNTS PAID BY YOU
+TO ALGOVOI IN THE TWELVE MONTHS PRECEDING THE CLAIM OR (b) USD 100.
+
+───────────────────────────────────────────────────────────────────────────────
+8. TERMINATION
+───────────────────────────────────────────────────────────────────────────────
+
+This License and the rights granted herein terminate automatically upon any
+breach of its terms. Upon termination, you must destroy all copies of the
+Software in your possession.
+
+───────────────────────────────────────────────────────────────────────────────
+9. GOVERNING LAW
+───────────────────────────────────────────────────────────────────────────────
+
+This License shall be governed by the laws of England and Wales, without
+regard to conflict-of-laws principles.
+
+───────────────────────────────────────────────────────────────────────────────
+10. ACQUISITION ENQUIRIES
+───────────────────────────────────────────────────────────────────────────────
+
+AlgoVoi (chopmob-cloud) is open to acquisition discussions.
+Enquiries: hello@algovoi.co.uk
