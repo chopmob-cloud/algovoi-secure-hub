@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "algovoi-secure-hub"
+version = "0.3.5"
+description = "Lean AlgoVoi Secure Hub — web control panel + issuer-trust hub + service & policy bridge + keystone attestor trust for the federation and ZK-proof services."
+readme = "README.md"
+license = { text = "AlgoVoi Commercial License v1.0" }
+authors = [{ name = "AlgoVoi", email = "hello@algovoi.co.uk" }]
+keywords = ["algovoi", "substrate-2", "federation", "zkp", "control-plane", "issuer-registry", "policy-binding", "x402"]
+requires-python = ">=3.11"
+# The control plane is a web service (panel + API), so its server stack is a core
+# runtime dependency, not an optional extra — a plain install must be able to serve.
+dependencies = [
+    "substrate2>=2.0.0,<3.0",
+    "fastapi>=0.111,<1.0",
+    "pydantic>=2.7,<3.0",
+    "uvicorn[standard]>=0.29,<1.0",
+    "httpx>=0.27,<1.0",
+    "python-multipart>=0.0.9,<1.0",
+]
+
+[project.optional-dependencies]
+serve = [
+    "fastapi>=0.111,<1.0",
+    "pydantic>=2.7,<3.0",
+    "uvicorn[standard]>=0.29,<1.0",
+    "httpx>=0.27,<1.0",
+    "python-multipart>=0.0.9,<1.0",
+]
+postgres = ["psycopg[binary]>=3.1"]
+dev = [
+    "fastapi>=0.111,<1.0",
+    "pydantic>=2.7,<3.0",
+    "uvicorn[standard]>=0.29,<1.0",
+    "httpx>=0.27,<1.0",
+    "python-multipart>=0.0.9,<1.0",
+    "psycopg[binary]>=3.1",
+    "pytest>=8.0",
+]
+
+[project.scripts]
+algovoi-secure-hub = "algovoi_secure_hub.service:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/algovoi_secure_hub"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "tests/.tmp-control-plane/**",
+    "**/__pycache__/**",
+    ".ruff_cache/**",
+    "**/*.log",
+]
