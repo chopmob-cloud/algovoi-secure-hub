@@ -11,8 +11,73 @@ AlgoVoi Secure Hub is a self-hosted, substrate-neutral security and trust hub. I
 - **Posture:** probes registered `/health` endpoints with bounded, fail-closed SSRF protections.
 - **Policy and attestor coordination:** publishes content-addressed policy references and the pinned Keystone attestor public key.
 - **Signed audit:** every trust and topology mutation is committed with an HMAC-chained audit entry and persisted-state verification.
+- **Edge / WAF / Guard:** three independent, opt-in middleware layers that sit in front of every request (see below).
 
 The registry coordinates metadata and posture only; it does not canonicalise, settle, or mutate a security application's evidence.
+
+## Security middleware layers
+
+Three middleware modules are built into the hub and sit in front of all traffic in this order: **Edge → WAF → Guard → login gate**. Each is disabled by default; set the corresponding environment variable to activate it.
+
+### Edge (`AHUB_EDGE_*`)
+
+The outermost layer. Blocks origin-direct requests before they reach any authentication logic.
+
+| Feature | Env var | Description |
+|---|---|---|
+| HMAC pre-auth token | `AHUB_EDGE_TOKEN` | Reverse proxy attaches a shared secret via `X-AlgoVoi-Edge-Token`; requests without the correct token receive **401**. |
+| Per-IP rate limit | `AHUB_EDGE_RPM` | Sliding-window requests-per-minute ceiling per client IP. Excess requests receive **429** with `Retry-After: 60`. |
+| Geo-blocklist | `AHUB_EDGE_GEO_BLOCK` | Comma-separated ISO 3166-1 alpha-2 codes (e.g. `CN,RU`). Checked against the `X-Country-Code` header set by a trusted reverse proxy; blocked countries receive **403**. |
+
+Stats: `GET /v1/edge/stats` (admin bearer required).
+
+### WAF (`AHUB_WAF_ENABLED=1`)
+
+Stateless pattern-matching firewall. Scans the URL path and query string on every request, and the JSON/text body on POST/PUT/PATCH requests.
+
+| Rule family | Coverage |
+|---|---|
+| `sqli-*` | UNION SELECT, stacked queries, Boolean injection, SQL comment + DML |
+| `xss-*` | Script tags, inline event handlers, `javascript:` URIs, `data:text/html` |
+| `cmdi-*` | Shell pipe/chain, backtick substitution, `$(…)` substitution |
+| `pt-*` | Directory traversal (`../`), percent-encoded traversal |
+| `ssrf-*` | Cloud metadata IPs/hostnames (`169.254.169.254`, `metadata.google`), loopback URLs in body |
+| `pi-*` | Prompt-injection phrases, `[SYSTEM]` tags, XML instruction tags, LLM jailbreak patterns |
+
+Blocked requests receive **400**. Oversized bodies (default 1 MiB, override with `AHUB_WAF_MAX_BODY`) receive **413**.
+
+Stats: `GET /v1/waf/stats` (admin bearer required).
+
+### Guard (`AHUB_GUARD_ENABLED=1`)
+
+Runtime anomaly detection with a per-tenant EWMA baseline and a circuit breaker.
+
+Tenant identity is resolved from (in priority order): `X-AlgoVoi-Tenant` header → `X-Tenant-Id` header → client IP.
+
+| Feature | Env var | Default |
+|---|---|---|
+| Anomaly threshold | `AHUB_GUARD_ANOMALY_FACTOR` | `5.0` σ above baseline |
+| Circuit trip threshold | `AHUB_GUARD_CIRCUIT_TRIP` | `5` anomaly hits |
+| Circuit reset | `AHUB_GUARD_CIRCUIT_RESET_S` | `300` seconds |
+| EWMA learning rate | `AHUB_GUARD_EWMA_ALPHA` | `0.1` |
+
+When the circuit opens, the tenant receives **429** with `Retry-After: 60` until the cool-down expires.
+
+An operator can also set a hard per-tenant RPM cap that bypasses the EWMA logic:
+
+```http
+POST /v1/guard/policy
+Authorization: Bearer <admin-token>
+Content-Type: application/json
+
+{"tenant": "acme-corp", "cap_rpm": 500}
+```
+
+Pass `"cap_rpm": null` to remove the cap.
+
+Status: `GET /v1/guard/status` (admin bearer required).
+
+> **Multi-worker note:** Guard state is in-process. In a multi-worker deployment set `AHUB_GUARD_ENABLED=0` and implement anomaly detection in the upstream reverse proxy or a shared cache layer.
 
 ## Verified compatible AlgoVoi security applications
 
@@ -70,6 +135,16 @@ Content-Type: application/json
 | `AHUB_REGISTRATION_TOKENS` | JSON name → scoped registration token map |
 | `AHUB_REGISTRATION_TOKEN` / `AHUB_REGISTRATION_NAME` | Single scoped registration credential |
 | `AHUB_BIND` | Bind address, default `0.0.0.0:8094` |
+| `AHUB_EDGE_TOKEN` | Edge: HMAC pre-auth token |
+| `AHUB_EDGE_RPM` | Edge: per-IP requests-per-minute ceiling |
+| `AHUB_EDGE_GEO_BLOCK` | Edge: comma-separated ISO country codes to block |
+| `AHUB_WAF_ENABLED` | WAF: set to `1` to enable |
+| `AHUB_WAF_MAX_BODY` | WAF: maximum inspected body size in bytes (default 1048576) |
+| `AHUB_GUARD_ENABLED` | Guard: set to `1` to enable |
+| `AHUB_GUARD_ANOMALY_FACTOR` | Guard: σ multiplier for anomaly threshold (default 5.0) |
+| `AHUB_GUARD_CIRCUIT_TRIP` | Guard: anomaly hits before circuit opens (default 5) |
+| `AHUB_GUARD_CIRCUIT_RESET_S` | Guard: circuit breaker cool-down in seconds (default 300) |
+| `AHUB_GUARD_EWMA_ALPHA` | Guard: EWMA learning rate (default 0.1) |
 
 Existing applications may continue using their current `S2_HUB_*` or `CCC_HUB_*` client variables. Those clients call the same Secure Hub endpoints; no application logic or evidence contract needs to change.
 
