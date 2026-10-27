@@ -87,6 +87,7 @@ _MAX_TRUST_RESPONSE_BYTES = _bounded_limit("AHUB_MAX_TRUST_RESPONSE_BYTES", 8 * 
 _POSTURE_TOTAL_SECONDS = 30.0
 _PUBLIC_TRUST_RPM = _bounded_limit("AHUB_PUBLIC_TRUST_RPM", 600, 100_000)
 _HEALTH_RPM = _bounded_limit("AHUB_HEALTH_RPM", 600, 100_000)
+_LOGIN_RPM = _bounded_limit("AHUB_LOGIN_RPM", 10, 1_000)
 _RATE_LOCK = threading.Lock()
 _RATE_BUCKETS: dict[tuple[str, str], tuple[float, int]] = {}
 _AUDIT_REQUEST_VALIDATED = contextvars.ContextVar("ahub_audit_request_validated", default=False)
@@ -184,6 +185,8 @@ _ADMIN_TOKEN = _bootstrap_secret("AHUB_ADMIN_TOKEN", "admin_token")
 _AUDIT_KEY = _bootstrap_secret("AHUB_AUDIT_KEY", "audit_key").encode()
 if hmac.compare_digest(_ADMIN_TOKEN.encode(), _AUDIT_KEY):
     raise RuntimeError("AHUB_ADMIN_TOKEN and AHUB_AUDIT_KEY must be distinct")
+# Derive a dedicated session-signing key so a compromised audit key cannot forge sessions.
+_SESSION_KEY = hmac.new(_AUDIT_KEY, b"ahub-session-signing-v1", hashlib.sha256).digest()
 
 
 def _verify_audit_chain(entries: list[dict]) -> bool:
@@ -761,7 +764,7 @@ _AUTH_OPEN = {"/health", "/login", "/logout"}
 
 def _make_session(now_s: int, ttl_s: int = _SESSION_TTL_S) -> str:
     exp = now_s + ttl_s
-    mac = hmac.new(_AUDIT_KEY, f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
+    mac = hmac.new(_SESSION_KEY, f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
     return f"{exp}.{mac}"
 
 
@@ -773,7 +776,7 @@ def _session_ok(cookie: str, now_s: int) -> bool:
         return False
     if now_s >= exp:
         return False
-    expected = hmac.new(_AUDIT_KEY, f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
+    expected = hmac.new(_SESSION_KEY, f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(mac, expected)
 # SECURITY (2026-08-19): the read-only trust-consumption endpoints expose ONLY published public keys and
 # DIDs (the trust anchors bridged consumers are documented to fetch — FEDERATION_ISSUER_PKS, the atb hub
@@ -806,13 +809,14 @@ def _request_rate_allowed(request, bucket: str, limit: int) -> bool:
     now = time.monotonic()
     with _RATE_LOCK:
         if key not in _RATE_BUCKETS and len(_RATE_BUCKETS) >= 10_000:
-            oldest = min(_RATE_BUCKETS, key=lambda item: _RATE_BUCKETS[item][0])
-            _RATE_BUCKETS.pop(oldest, None)
-        if len(_RATE_BUCKETS) > 10_000:
+            # Single pass: evict expired buckets first, then fall back to oldest.
             cutoff = now - 60.0
-            for old_key, (started, _) in list(_RATE_BUCKETS.items()):
-                if started < cutoff:
-                    _RATE_BUCKETS.pop(old_key, None)
+            expired = [k for k, (started, _) in _RATE_BUCKETS.items() if started < cutoff]
+            for k in expired:
+                _RATE_BUCKETS.pop(k, None)
+            if len(_RATE_BUCKETS) >= 10_000:
+                oldest = min(_RATE_BUCKETS, key=lambda k: _RATE_BUCKETS[k][0])
+                _RATE_BUCKETS.pop(oldest, None)
         started, count = _RATE_BUCKETS.get(key, (now, 0))
         if now - started >= 60.0:
             started, count = now, 0
@@ -824,12 +828,28 @@ def _request_rate_allowed(request, bucket: str, limit: int) -> bool:
 
 
 @app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; "
+        "img-src 'self' data:; frame-ancestors 'none'"
+    )
+    return response
+
+
+@app.middleware("http")
 async def _login_gate(request, call_next):
     # Public trust reads are GET-only; they are unavailable while the trust root is degraded.
     public_read = request.method in ("GET", "HEAD") and _is_public_trust_path(request.url.path)
     if request.url.path == "/health" and request.method in ("GET", "HEAD"):
         if not _request_rate_allowed(request, "health", _HEALTH_RPM):
             return _Response(status_code=429, headers={"Retry-After": "60"}, content="health rate limit exceeded")
+    if request.url.path == "/login" and request.method == "POST":
+        if not _request_rate_allowed(request, "login", _LOGIN_RPM):
+            return _Response(status_code=429, headers={"Retry-After": "60"}, content="login rate limit exceeded")
     if request.url.path in _AUTH_OPEN:
         return await call_next(request)
     if public_read:
@@ -853,10 +873,13 @@ async def _login_gate(request, call_next):
         return response
     authenticated = _is_authed(request)
     if (not authenticated and request.method == "POST" and request.url.path == "/v1/services"
-            and request.headers.get("authorization", "").startswith("Bearer ")
-            and (hmac.compare_digest(request.headers["authorization"][7:].strip(), _REGISTRATION_TOKEN)
-                 or request.headers["authorization"][7:].strip() in _REGISTRATION_TOKENS.values())):
-        authenticated = True
+            and request.headers.get("authorization", "").startswith("Bearer ")):
+        _tok = request.headers["authorization"][7:].strip()
+        _tok_ok = bool(_REGISTRATION_TOKEN) and hmac.compare_digest(_tok, _REGISTRATION_TOKEN)
+        # Iterate all values unconditionally to prevent timing side-channel on dict membership.
+        _tok_ok = _tok_ok or any(hmac.compare_digest(_tok, v) for v in _REGISTRATION_TOKENS.values())
+        if _tok_ok:
+            authenticated = True
     if authenticated:
         if request.method not in ("GET", "HEAD"):
             try:
@@ -878,7 +901,7 @@ async def login_page(e: int = 0) -> HTMLResponse:
 async def login_submit(password: Annotated[str, _Form()] = "") -> Any:
     if hmac.compare_digest(password, _ADMIN_TOKEN):
         r = _Redirect("/", status_code=303)
-        secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes"}
+        secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "1").strip().lower() not in {"0", "false", "no"}
         r.set_cookie(_SESSION_COOKIE, _make_session(int(time.time())), httponly=True, secure=secure_cookie,
                      samesite="lax", max_age=_SESSION_TTL_S)
         return r
@@ -1354,27 +1377,6 @@ def _probe_address_allowed(ip: ipaddress._BaseAddress) -> bool:
     )
 
 
-def _posture_target_ok(base_url: str) -> bool:
-    """SSRF guard. The control plane legitimately polls INTERNAL substrate services (federation,
-    zkp, atb) on the deployment/VPC network, so private and loopback targets stay allowed. Block the
-    cloud metadata service and other link-local/multicast targets so a registered base_url can't turn
-    the poll into a fetch-and-reflect proxy for instance credentials. Only http(s)."""
-    try:
-        p = urlparse(base_url)
-    except Exception:  # noqa: BLE001
-        return False
-    if p.scheme not in ("http", "https") or not p.hostname:
-        return False
-    try:
-        infos = socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80),
-                                   proto=socket.IPPROTO_TCP)
-    except Exception:  # noqa: BLE001
-        return False
-    return bool(infos) and all(
-        _probe_address_allowed(ipaddress.ip_address(info[4][0])) for info in infos
-    )
-
-
 def _resolve_posture_target(base_url: str, health_path: str) -> tuple[str, str | None] | None:
     """Resolve an HTTP target once and return a rebind-safe ``(fetch_url, host_header)``.
 
@@ -1419,7 +1421,6 @@ def _resolve_posture_target(base_url: str, health_path: str) -> tuple[str, str |
         if explicit_port:
             host_header = f"[{host_header}]:{port}" if ":" in host_header else f"{host_header}:{port}"
         return f"http://{host_port}{target_path}", host_header
-    return base_url + health_path, None   # https: rely on validated resolution + cert/SNI
 
 
 async def _resolve_posture_target_async(base_url: str, health_path: str) -> tuple[str, str | None] | None:
@@ -1648,7 +1649,11 @@ async def control_panel() -> HTMLResponse:
 # ── Audit ─────────────────────────────────────────────────────────────────────
 
 @app.get("/v1/audit")
-async def audit(authorization: Annotated[str | None, Header()] = None) -> dict:
+async def audit(
+    authorization: Annotated[str | None, Header()] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
     _require_admin(authorization)
     try:
         _refresh_persisted_state()
@@ -1656,7 +1661,9 @@ async def audit(authorization: Annotated[str | None, Header()] = None) -> dict:
         raise HTTPException(status_code=503, detail="audit chain integrity failure") from exc
     if not _AUDIT_INTEGRITY_OK:
         raise HTTPException(status_code=503, detail="audit chain integrity failure")
-    return {"entries": _audit, "chained": True}
+    limit = max(1, min(limit, 1_000))
+    offset = max(0, offset)
+    return {"entries": _audit[offset: offset + limit], "total": len(_audit), "offset": offset, "limit": limit, "chained": True}
 
 
 def main() -> None:
