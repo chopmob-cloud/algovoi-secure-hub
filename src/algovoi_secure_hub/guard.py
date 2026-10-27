@@ -167,3 +167,16 @@ def guard_set_policy(tenant: str, cap_rpm: int | None) -> None:
             _POLICY_CAP[tenant] = cap_rpm
         _CIRCUIT_OPEN.pop(tenant, None)
         _ANOMALY_SCORE.pop(tenant, None)
+
+
+async def guard_middleware(request, call_next):
+    """ASGI middleware: anomaly detection + circuit breaker per tenant."""
+    if not GUARD_ENABLED:
+        return await call_next(request)
+
+    tenant = _tenant_id(request)
+    if not _check_guard(tenant):
+        from starlette.responses import Response
+        return Response(status_code=429, headers={"Retry-After": "60"}, content="guard circuit open")
+
+    return await call_next(request)
