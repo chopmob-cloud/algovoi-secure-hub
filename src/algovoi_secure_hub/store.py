@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """DSN-backed persistence for the AlgoVoi Secure Hub.
 
 SQLite by default (stdlib, a single file, air-gap friendly). Set ``AHUB_DB`` to a
@@ -74,7 +75,7 @@ class Store:
         self._ph = "?" if self._sqlite else "%s"
         self._init()
 
-    # ── Connection (SQLite stdlib, or psycopg for Postgres) ──────────────────
+    # ── Connection (SQLite stdlib, or psycopg for Postgres) ──────────────────────
     def _conn(self):
         if self._sqlite:
             import sqlite3
@@ -231,7 +232,7 @@ class Store:
         finally:
             conn.close()
 
-    # ── Services ─────────────────────────────────────────────────────────────
+    # ── Services ─────────────────────────────────────────────────────────────────
     def services_load(self) -> dict[str, dict]:
         return {
             r[0]: {"type": r[1], "base_url": r[2], "health_path": r[3], "registered_at": r[4]}
