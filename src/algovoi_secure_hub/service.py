@@ -56,8 +56,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from substrate2.policy_binding import policy_bound_ref, policy_ref
 
 from algovoi_secure_hub import __version__
+from algovoi_secure_hub.edge import edge_middleware, edge_stats
+from algovoi_secure_hub.guard import GUARD_ENABLED, guard_middleware, guard_set_policy, guard_stats
 from algovoi_secure_hub.panel import render_panel
 from algovoi_secure_hub.store import Store
+from algovoi_secure_hub.waf import waf_middleware, waf_stats
 
 _FALCON1024_PK_LEN = 1793
 _IETF_ANCHOR = "draft-hopley-x402-canonicalisation-jcs-v1-04"
@@ -892,6 +895,27 @@ async def _login_gate(request, call_next):
     return _Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
 
 
+# ── Security middleware stack (Edge → WAF → Guard, outermost-first) ───────────
+# Starlette applies @app.middleware("http") in LIFO order: the last decorator
+# registered is the outermost wrapper (first to receive the request).  To get
+# Edge outermost → WAF → Guard → existing _login_gate → _security_headers we
+# register Guard first (innermost of the three), WAF next, Edge last.
+
+@app.middleware("http")
+async def _guard_filter(request, call_next):
+    return await guard_middleware(request, call_next)
+
+
+@app.middleware("http")
+async def _waf_filter(request, call_next):
+    return await waf_middleware(request, call_next)
+
+
+@app.middleware("http")
+async def _edge_filter(request, call_next):
+    return await edge_middleware(request, call_next)
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(e: int = 0) -> HTMLResponse:
     return HTMLResponse(_render_login(error=bool(e)))
@@ -1664,6 +1688,51 @@ async def audit(
     limit = max(1, min(limit, 1_000))
     offset = max(0, offset)
     return {"entries": _audit[offset: offset + limit], "total": len(_audit), "offset": offset, "limit": limit, "chained": True}
+
+
+# ── Edge / WAF / Guard stats and policy ──────────────────────────────────────
+
+@app.get("/v1/edge/stats")
+async def get_edge_stats(authorization: Annotated[str | None, Header()] = None) -> dict:
+    """Live counters for the Edge layer (token rejections, geo blocks, rate limits)."""
+    _require_admin(authorization)
+    return edge_stats()
+
+
+@app.get("/v1/waf/stats")
+async def get_waf_stats(authorization: Annotated[str | None, Header()] = None) -> dict:
+    """Live counters for the WAF (blocked requests per rule, oversized bodies)."""
+    _require_admin(authorization)
+    return waf_stats()
+
+
+@app.get("/v1/guard/status")
+async def get_guard_status(authorization: Annotated[str | None, Header()] = None) -> dict:
+    """Live anomaly scores, circuit-breaker state, and per-tenant EWMA baselines."""
+    _require_admin(authorization)
+    return guard_stats()
+
+
+class GuardPolicyIn(BaseModel):
+    tenant: str = Field(..., min_length=1, max_length=64,
+                        description="Tenant identifier as resolved by the Guard layer.")
+    cap_rpm: int | None = Field(default=None, ge=1, le=100_000,
+                                description="Fixed RPM ceiling; null removes the cap.")
+
+
+@app.post("/v1/guard/policy")
+async def set_guard_policy(body: GuardPolicyIn,
+                           authorization: Annotated[str | None, Header()] = None) -> dict:
+    """Set or clear a fixed per-tenant RPM cap and reset any open circuit breaker.
+
+    When cap_rpm is null the operator cap is removed and the tenant reverts to
+    EWMA-based anomaly detection.  Requires Guard to be enabled
+    (AHUB_GUARD_ENABLED=1)."""
+    _require_admin(authorization)
+    if not GUARD_ENABLED:
+        raise HTTPException(status_code=409, detail="Guard is not enabled (set AHUB_GUARD_ENABLED=1)")
+    guard_set_policy(body.tenant, body.cap_rpm)
+    return {"tenant": body.tenant, "cap_rpm": body.cap_rpm, "active": body.cap_rpm is not None}
 
 
 def main() -> None:
