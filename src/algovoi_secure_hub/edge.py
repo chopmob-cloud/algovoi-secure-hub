@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """AlgoVoi Secure Hub — Edge layer.
 
 An in-process edge filter that sits outermost in the middleware stack and
@@ -37,6 +38,11 @@ _GEO_BLOCKLIST: frozenset[str] = (
 )
 
 EDGE_ENABLED: bool = bool(_EDGE_TOKEN or _EDGE_RPM or _GEO_BLOCKLIST)
+
+if _EDGE_TOKEN and (len(_EDGE_TOKEN) < 16 or len(set(_EDGE_TOKEN)) < 8):
+    raise RuntimeError(
+        "AHUB_EDGE_TOKEN must contain at least 16 characters with sufficient entropy"
+    )
 
 if _GEO_BLOCKLIST and not _EDGE_TOKEN:
     raise RuntimeError(

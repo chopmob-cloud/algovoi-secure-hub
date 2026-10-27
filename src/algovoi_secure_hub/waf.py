@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """AlgoVoi Secure Hub — WAF (Web Application Firewall) middleware.
 
 Stateless request inspection that runs after the Edge layer and before the
@@ -30,6 +31,10 @@ WAF_ENABLED: bool = os.environ.get("AHUB_WAF_ENABLED", "").strip().lower() not i
     "", "0", "false", "no"
 )
 _MAX_BODY: int = int(os.environ.get("AHUB_WAF_MAX_BODY", str(1 * 1024 * 1024)))
+if not (1 <= _MAX_BODY <= 64 * 1024 * 1024):
+    raise RuntimeError(
+        f"AHUB_WAF_MAX_BODY must be between 1 and {64 * 1024 * 1024} bytes (64 MiB)"
+    )
 
 # ── Pattern catalogue ─────────────────────────────────────────────────────────
 # Each entry: (rule_id, description, compiled_pattern)
@@ -58,7 +63,7 @@ _r("cmdi-02", "Backtick command substitution", r"`[^`]{1,200}`")
 _r("cmdi-03", "$(…) command substitution", r"\$\([^)]{1,200}\)")
 
 # Path traversal
-_r("pt-01", "Directory traversal (../ sequences)", r"(?:\.\./|\.\.\\){2,}")
+_r("pt-01", "Directory traversal (../ sequences)", r"(?:\.\./|\.\.\\ )+")
 _r("pt-02", "Percent-encoded traversal", r"%2e%2e[%/\\]")
 
 # SSRF (supplement schema-level guard in schemas.py / service.py)
@@ -111,10 +116,12 @@ async def waf_middleware(request, call_next):
         from starlette.responses import Response
         return Response(status_code=400, content="request blocked by WAF")
 
-    # 2. Request body — JSON / text POST|PUT|PATCH only, bounded to _MAX_BODY
+    # 2. Request body — JSON / text / form POST|PUT|PATCH only, bounded to _MAX_BODY
     if request.method.upper() in ("POST", "PUT", "PATCH"):
         ct = request.headers.get("content-type", "").lower()
-        if "application/json" in ct or ct.startswith("text/"):
+        if ("application/json" in ct or ct.startswith("text/")
+                or "application/x-www-form-urlencoded" in ct
+                or "multipart/form-data" in ct):
             body_bytes = await request.body()
             if len(body_bytes) > _MAX_BODY:
                 _STATS["blocked_oversized"] += 1
