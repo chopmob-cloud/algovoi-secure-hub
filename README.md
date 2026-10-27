@@ -1,6 +1,6 @@
 # algovoi-secure-hub
 
-> **License:** AlgoVoi Commercial License v1.0 — evaluation use only.
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 AlgoVoi Secure Hub is a self-hosted, substrate-neutral security and trust hub. It provides issuer trust distribution, service/add-on registration, health posture, policy and attestor coordination, and a durable HMAC-chained audit log. It does not replace the canonical evidence, settlement, compliance, or payment contracts owned by the security applications that bolt into it.
 

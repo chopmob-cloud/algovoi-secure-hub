@@ -7,7 +7,7 @@ name = "algovoi-secure-hub"
 version = "0.3.5"
 description = "Lean AlgoVoi Secure Hub — web control panel + issuer-trust hub + service & policy bridge + keystone attestor trust for the federation and ZK-proof services."
 readme = "README.md"
-license = { text = "AlgoVoi Commercial License v1.0" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "AlgoVoi", email = "hello@algovoi.co.uk" }]
 keywords = ["algovoi", "substrate-2", "federation", "zkp", "control-plane", "issuer-registry", "policy-binding", "x402"]
 requires-python = ">=3.11"
