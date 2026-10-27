@@ -894,7 +894,7 @@ async def _login_gate(request, call_next):
     return _Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
 
 
-# ── Security middleware stack (Edge → WAF → Guard, outermost-first) ───────────
+# ── Security middleware stack (Edge → WAF → Guard, outermost-first) ─────────────────
 # Starlette applies @app.middleware("http") in LIFO order: the last decorator
 # registered is the outermost wrapper (first to receive the request).  To get
 # Edge outermost → WAF → Guard → existing _login_gate → _security_headers we
@@ -924,7 +924,7 @@ async def login_page(e: int = 0) -> HTMLResponse:
 async def login_submit(password: Annotated[str, _Form()] = "") -> Any:
     if hmac.compare_digest(password, _ADMIN_TOKEN):
         r = _Redirect("/", status_code=303)
-        secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "1").strip().lower() not in {"0", "false", "no"}
+        secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "0").strip().lower() not in {"0", "false", "no"}
         r.set_cookie(_SESSION_COOKIE, _make_session(int(time.time())), httponly=True, secure=secure_cookie,
                      samesite="lax", max_age=_SESSION_TTL_S)
         return r
@@ -938,7 +938,7 @@ async def logout() -> Any:
     return r
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── Models ──────────────────────────────────────────────────────────────────────────
 
 _DID_RE = re.compile(r"^did:[a-z0-9]+:[A-Za-z0-9._:%/-]{1,240}$")
 
@@ -1137,7 +1137,7 @@ def _keystone_view() -> dict:
             "evidence_formats": ["keystone_evidence", "jws", "vc", "pef", "tap", "zkp"]}
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+# ── Health ──────────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health() -> Any:
@@ -1159,7 +1159,7 @@ async def health() -> Any:
     return JSONResponse(body, status_code=200 if _AUDIT_INTEGRITY_OK else 503)
 
 
-# ── Issuer trust registry (admin) ─────────────────────────────────────────────
+# ── Issuer trust registry (admin) ──────────────────────────────────────────────────
 
 @app.post("/v1/issuers")
 async def add_issuer(body: IssuerIn, authorization: Annotated[str | None, Header()] = None) -> dict:
@@ -1222,7 +1222,7 @@ async def list_issuers() -> dict:
     return {"issuers": [{"did": d, "kid": r["kid"], "added_at": r["added_at"]} for d, r in _issuers.items()]}
 
 
-# ── Hub: trust set in the shapes the three services consume ───────────────────
+# ── Hub: trust set in the shapes the three services consume ────────────────────────────
 
 @app.get("/v1/issuer-pks")
 async def issuer_pks() -> dict[str, str]:
@@ -1254,7 +1254,7 @@ async def issuer_atb_keys(did: str) -> JSONResponse:
     return JSONResponse(_atb_keys_doc(did))
 
 
-# ── Service bridge + addon bolt-in ────────────────────────────────────────────
+# ── Service bridge + addon bolt-in ────────────────────────────────────────────────────
 
 @app.post("/v1/services")
 async def register_service(body: ServiceIn, authorization: Annotated[str | None, Header()] = None) -> dict:
@@ -1316,7 +1316,7 @@ async def remove_service(name: str, authorization: Annotated[str | None, Header(
     return {"name": name, "removed": True, "service_count": len(_services)}
 
 
-# ── Substrate-neutral adapter registry ────────────────────────────────────────
+# ── Substrate-neutral adapter registry ────────────────────────────────────────────
 
 @app.post("/v1/substrates")
 async def register_substrate(body: SubstrateIn,
@@ -1555,7 +1555,7 @@ async def posture() -> dict:
     }
 
 
-# ── Policy bridge (built-in, default) ─────────────────────────────────────────
+# ── Policy bridge (built-in, default) ──────────────────────────────────────────────
 
 @app.get("/v1/policy")
 async def get_policy() -> dict:
@@ -1618,7 +1618,7 @@ async def bind_policy(body: BindIn, authorization: Annotated[str | None, Header(
     return {"policy_bound_ref": bound, "policy_ref": bound_policy_ref, "subject_ref": body.subject_ref}
 
 
-# ── Keystone attestor trust (federation: attestor-key trust + posture) ────────
+# ── Keystone attestor trust (federation: attestor-key trust + posture) ────────────
 
 @app.get("/v1/keystone-attestor")
 async def get_keystone_attestor() -> dict:
@@ -1651,7 +1651,7 @@ async def set_keystone_attestor(body: KeystoneAttestorIn,
     return {"did": body.did, "kid": body.kid, "active": True}
 
 
-# ── Web control panel (default, read-only) ────────────────────────────────────
+# ── Web control panel (default, read-only) ─────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def control_panel() -> HTMLResponse:
@@ -1670,7 +1670,7 @@ async def control_panel() -> HTMLResponse:
     ))
 
 
-# ── Audit ─────────────────────────────────────────────────────────────────────
+# ── Audit ──────────────────────────────────────────────────────────────────────────
 
 @app.get("/v1/audit")
 async def audit(
@@ -1690,7 +1690,7 @@ async def audit(
     return {"entries": _audit[offset: offset + limit], "total": len(_audit), "offset": offset, "limit": limit, "chained": True}
 
 
-# ── Edge / WAF / Guard stats and policy ──────────────────────────────────────
+# ── Edge / WAF / Guard stats and policy ────────────────────────────────────────────
 
 @app.get("/v1/edge/stats")
 async def get_edge_stats(authorization: Annotated[str | None, Header()] = None) -> dict:
