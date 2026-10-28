@@ -246,10 +246,10 @@ def test_audit_chain_verification_detects_tampering():
     assert _verify_audit_chain([{"seq": 0, "action": "test", "detail": None, "prev": "", "mac": ""}]) is False
 
 
-def test_http_panel_login_does_not_require_secure_cookie_by_default(client):
+def test_http_panel_login_sets_secure_cookie_by_default(client):
     response = client.post("/login", data={"password": _ADMIN_TOKEN}, follow_redirects=False)
     assert response.status_code == 303
-    assert "Secure" not in response.headers["set-cookie"]
+    assert "Secure" in response.headers["set-cookie"]
 
 
 def test_posture_and_panel_expose_registered_substrates(client, admin_headers):

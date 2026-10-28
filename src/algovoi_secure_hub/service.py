@@ -924,7 +924,7 @@ async def login_page(e: int = 0) -> HTMLResponse:
 async def login_submit(password: Annotated[str, _Form()] = "") -> Any:
     if hmac.compare_digest(password, _ADMIN_TOKEN):
         r = _Redirect("/", status_code=303)
-        secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "0").strip().lower() not in {"0", "false", "no"}
+        secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "1").strip().lower() not in {"0", "false", "no"}
         r.set_cookie(_SESSION_COOKIE, _make_session(int(time.time())), httponly=True, secure=secure_cookie,
                      samesite="lax", max_age=_SESSION_TTL_S)
         return r
