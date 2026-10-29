@@ -198,9 +198,15 @@ def test_substrate_only_failure_is_degraded_in_panel(client, admin_headers):
 
 
 def test_package_version_is_consistent():
+    """The module literal must match the manifest, so a version bump cannot go stale."""
     from algovoi_secure_hub import __version__
 
-    assert __version__ == "0.3.5"
+    import pathlib
+    import re
+
+    pyproject = pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml"
+    expected = re.search(r'(?m)^version = "([^"]+)"', pyproject.read_text(encoding="utf-8")).group(1)
+    assert __version__ == expected
 
 
 def test_pinned_probe_preserves_base_url_path_prefix():

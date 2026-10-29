@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "algovoi-secure-hub"
-version = "0.3.5"
+version = "0.3.6"
 description = "Lean AlgoVoi Secure Hub — web control panel + issuer-trust hub + service & policy bridge + keystone attestor trust for the federation and ZK-proof services."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -14,7 +14,7 @@ requires-python = ">=3.11"
 # The control plane is a web service (panel + API), so its server stack is a core
 # runtime dependency, not an optional extra — a plain install must be able to serve.
 dependencies = [
-    "substrate2>=2.0.0,<3.0",
+    "algovoi-policy-binding>=0.5.0",
     "fastapi>=0.111,<1.0",
     "pydantic>=2.7,<3.0",
     "uvicorn[standard]>=0.29,<1.0",

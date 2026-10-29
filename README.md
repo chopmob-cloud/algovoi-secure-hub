@@ -15,6 +15,51 @@ AlgoVoi Secure Hub is a self-hosted, substrate-neutral security and trust hub. I
 
 The registry coordinates metadata and posture only; it does not canonicalise, settle, or mutate a security application's evidence.
 
+## Screenshots
+
+The panel is server-side rendered — no build step, no external assets, no CDN. It ships one dark theme, shared token-for-token with the Keystone control panel, so an operator moving between the two sees the same product.
+
+![AlgoVoi Secure Hub dashboard](docs/screenshots/secure-hub-dashboard.png)
+
+*Live posture: registered services and their health, the active policy bridge with its content-addressed `policy_ref`, the issuer trust set, and audit depth. Auto-refresh every 10s.*
+
+![AlgoVoi Secure Hub sign-in](docs/screenshots/secure-hub-login.png)
+
+*The sign-in gate. The password is `AHUB_ADMIN_TOKEN`; the session is a signed cookie, not a bearer header.*
+
+## Install and run
+
+Every dependency resolves from public indexes, so a plain install works:
+
+```bash
+pip install algovoi-secure-hub        # once published to an index
+# or, from a checkout:
+pip install -e .
+```
+
+The policy bridge uses the published **`algovoi-policy-binding`** (Apache-2.0). It previously imported `substrate2.policy_binding`, an internal reimplementation that is deliberately *not* published, so a plain `pip install` could never resolve — that dependency is gone.
+
+Run it:
+
+```bash
+export AHUB_DATA_DIR=/var/lib/algovoi-secure-hub
+export AHUB_ADMIN_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export AHUB_AUDIT_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export AHUB_BIND=127.0.0.1:8094
+
+algovoi-secure-hub
+# health:   curl -s localhost:8094/health
+# panel:    open http://localhost:8094/ and sign in with AHUB_ADMIN_TOKEN
+```
+
+`AHUB_ADMIN_TOKEN` and `AHUB_AUDIT_KEY` must be **distinct**; the service refuses to start if they match. When either is absent the hub generates one and persists it under `AHUB_DATA_DIR` with restrictive permissions.
+
+| Request | Expected |
+|---|---|
+| `GET /health` | `200` (unauthenticated, always) |
+| `GET /` | `401` until you sign in |
+| `GET /v1/services` with admin bearer | `200` + `{"services": [...], "default_bridge": [...]}` |
+
 ## Security middleware layers
 
 Three middleware modules are built into the hub and sit in front of all traffic in this order: **Edge → WAF → Guard → login gate**. Each is disabled by default; set the corresponding environment variable to activate it.
@@ -114,6 +159,91 @@ Content-Type: application/json
 
 `examples/addon_app.py` is a complete Python template. Non-Python applications make the same HTTP calls and expose `/health`.
 
+## Keystone integration
+
+The hub sits **beside** Keystone, not inside it. Keystone owns the execution decision, its content-addressed evidence and its journal; the hub owns cross-service topology, issuer trust and posture. Neither writes the other's evidence.
+
+### 1. Keystone attestor key (trust, no code)
+
+The hub distributes the pinned Keystone attestor public key so a bridged service can verify Keystone signatures as AlgoVoi without holding the signing seed. Admin-only to set, public to read:
+
+```bash
+curl -sX POST http://localhost:8094/v1/keystone-attestor \
+  -H "Authorization: Bearer $AHUB_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"did":"did:key:z6Mk...","jwk":{...},"kid":"k-2026-01"}'
+
+curl -s http://localhost:8094/v1/keystone-attestor     # safe to pin
+```
+
+The attestor also appears in `/v1/posture` under `keystone`, so a broken pin is visible rather than assumed.
+
+### 2. Registering Keystone as an addon
+
+Keystone's control panel is a web service with `/health`, so it bridges like any other addon. Addon registration requires a **scoped, name-bound token** — the admin bearer is explicitly refused for `type="addon"`:
+
+```bash
+# on the hub
+export AHUB_REGISTRATION_TOKEN="<scoped-token>"
+export AHUB_REGISTRATION_NAME="keystone-control"
+
+# from the Keystone side
+curl -sX POST http://localhost:8094/v1/services \
+  -H "Authorization: Bearer $AHUB_REGISTRATION_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"keystone-control","type":"addon",
+      "base_url":"http://keystone-control:8077","health_path":"/health"}'
+```
+
+A scoped registration is immutable: it can create its own name and nothing else, and cannot change an existing entry. For several addons use `AHUB_REGISTRATION_TOKENS`, a JSON name → token map.
+
+> Never give a bridged service or addon the admin bearer. The admin token can rewrite issuer trust and read the audit chain; the scoped token can only claim its own name.
+
+### 3. Shared policy binding
+
+The hub publishes an active `policy_ref` and binds it to a subject with `POST /v1/policy/bind`. That binding uses `algovoi_policy_binding.policy_bound_ref` — the same construction Keystone's `algovoi-policy-binding` package exposes — so a ref sealed on one side recomputes identically on the other:
+
+```
+policy_ref       = "sha256:" + SHA-256(JCS(policy_document))
+policy_bound_ref = "sha256:" + SHA-256(JCS({subject_ref, policy_ref}))
+```
+
+Both refs must be `sha256:` + 64 hex. The hub rejects anything else at the boundary, and a stored record whose refs no longer validate is treated as untrusted rather than crashing the panel.
+
+## Falcon-1024 issuer keys
+
+Registering an issuer requires a real **Falcon-1024** public key, base64-encoded. The hub enforces the exact size (`public key must be 1793 bytes`) and derives the key id itself.
+
+```bash
+pip install "pqcrypto==0.4.0"     # see the pin note below
+```
+
+```python
+import base64
+from pqcrypto.sign.falcon_1024 import generate_keypair   # PQClean-backed
+
+pk, sk = generate_keypair()
+assert len(pk) == 1793, len(pk)     # Falcon-1024 public key is exactly 1793 bytes
+assert len(sk) == 2305             # secret key; keep it offline, the hub never needs it
+print(base64.b64encode(pk).decode())   # -> public_key_b64 (2392 chars)
+```
+
+> **Pin `pqcrypto==0.4.0`.** Verified on both Linux and Windows: 0.4.0 produces a
+> 1793-byte public key and a 2305-byte secret key. Version **1.0.0 ships no sign
+> or kem modules at all**, so `from pqcrypto.sign.falcon_1024 import
+> generate_keypair` raises `ModuleNotFoundError` — it looks like a packaging
+> regression rather than an API change. Check the import resolves before relying
+> on it, and never paste an arbitrary 1793-byte blob: it passes the size check
+> but nothing will ever verify against it.
+
+```bash
+curl -sX POST http://localhost:8094/v1/issuers \
+  -H "Authorization: Bearer $AHUB_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"did":"did:web:issuer.example","public_key_b64":"<1793-byte key, base64>"}'
+```
+
+The returned `kid` is `SHA-256(public_key_bytes)[:16]`, computed by the hub — you never supply it. That derivation is verified end to end: a key generated with `pqcrypto==0.4.0` registered as `kid 1bde4858bf37b12f`, exactly matching the local recomputation of `SHA-256(pk)[:16]`.
+
+> **Verify the import before relying on it.** Some `pqcrypto` builds ship without the compiled sign modules, in which case `from pqcrypto.sign.falcon_1024 import generate_keypair` raises `ImportError`. If that happens, use your existing ATB/issuer tooling. Do not paste an arbitrary 1793-byte blob: it passes the size check but nothing will ever verify against it.
+
 ## Trust endpoints
 
 | Endpoint | Shape | Consumers |
@@ -121,6 +251,7 @@ Content-Type: application/json
 | `GET /v1/issuer-pks` | `{did: pk_b64}` | federation-validator, zkp-receipt, ATB clients |
 | `GET /.well-known/atb-keys.json` | canonical hub document | ATB hub resolver |
 | `GET /issuers/{did}/atb-keys.json` | per-issuer document | multi-hub deployments |
+| `GET /v1/keystone-attestor` | `{did, jwk, kid, set_at}` | services that pin Keystone signatures |
 
 ## Configuration
 
