@@ -20,7 +20,7 @@ import os
 import sys
 
 from algovoi_secure_hub.service import (
-    _AUDIT_KEY,
+    _audit_key,
     _audit_anchor_ok,
     _audit_state_matches,
     _audit_tail,
@@ -50,7 +50,7 @@ def _candidate_reconcile_entry(entries: list[dict], snapshot: dict) -> dict:
     seq = int(entries[-1]["seq"]) + 1 if entries else 0
     previous = str(entries[-1]["mac"]) if entries else ""
     body = {"seq": seq, "action": "state_reconcile", "detail": snapshot, "prev": previous}
-    mac = hmac.new(_AUDIT_KEY, json.dumps(body, sort_keys=True).encode(), hashlib.sha256).hexdigest()
+    mac = hmac.new(_audit_key(), json.dumps(body, sort_keys=True).encode(), hashlib.sha256).hexdigest()
     return {**body, "mac": mac}
 
 
@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
 
     detail = snapshot
     try:
-        entry = _store.state_reconcile_with_audit(snapshot, entries, detail, _AUDIT_KEY)
+        entry = _store.state_reconcile_with_audit(snapshot, entries, detail, _audit_key())
     except (RuntimeError, ValueError) as exc:
         print(f"REFUSED: persisted state or audit changed during reconciliation: {exc}", file=sys.stderr)
         return 4

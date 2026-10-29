@@ -25,7 +25,7 @@ os.environ["AHUB_AUDIT_KEY"] = secrets.token_urlsafe(32)
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "src"))
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 
-from app.main import _ADMIN_TOKEN, app
+from app.main import _admin_token, app
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def client():
 
 @pytest.fixture
 def admin_headers():
-    return {"Authorization": f"Bearer {_ADMIN_TOKEN}"}
+    return {"Authorization": f"Bearer {_admin_token()}"}
 
 
 def test_all_substrate_families_register_and_persist(client, admin_headers):
@@ -209,7 +209,9 @@ def test_package_version_is_consistent():
     assert __version__ == expected
 
 
-def test_pinned_probe_preserves_base_url_path_prefix():
+def test_pinned_probe_preserves_base_url_path_prefix(monkeypatch):
+    # Loopback is refused by default (SSRF defence); opt in explicitly to probe it.
+    monkeypatch.setenv("AHUB_PROBE_ALLOW_LOOPBACK", "1")
     from algovoi_secure_hub.service import _resolve_posture_target
 
     target = _resolve_posture_target("http://127.0.0.1:13/prefix", "/health")
@@ -217,7 +219,8 @@ def test_pinned_probe_preserves_base_url_path_prefix():
     assert target[0].endswith("/prefix/health")
 
 
-def test_pinned_probe_preserves_explicit_port_in_host_header():
+def test_pinned_probe_preserves_explicit_port_in_host_header(monkeypatch):
+    monkeypatch.setenv("AHUB_PROBE_ALLOW_LOOPBACK", "1")
     from algovoi_secure_hub.service import _resolve_posture_target
 
     target = _resolve_posture_target("http://127.0.0.1:8092/prefix", "/health")
@@ -225,14 +228,30 @@ def test_pinned_probe_preserves_explicit_port_in_host_header():
     assert target[1] == "127.0.0.1:8092"
 
 
+def test_pinned_probe_refuses_loopback_by_default(monkeypatch):
+    monkeypatch.delenv("AHUB_PROBE_ALLOW_LOOPBACK", raising=False)
+    from algovoi_secure_hub.service import _resolve_posture_target
+
+    assert _resolve_posture_target("http://127.0.0.1:8092/prefix", "/health") is None
+
+
+def test_probe_allow_loopback_never_relaxes_cloud_metadata(monkeypatch):
+    # The opt-in must relax loopback ONLY -- link-local / cloud-metadata stay blocked.
+    monkeypatch.setenv("AHUB_PROBE_ALLOW_LOOPBACK", "1")
+    from algovoi_secure_hub.service import _resolve_posture_target
+
+    assert _resolve_posture_target("http://169.254.169.254/latest/meta-data", "/health") is None
+
+
+
 def test_audit_chain_verification_detects_tampering():
-    from algovoi_secure_hub.service import _AUDIT_KEY, _verify_audit_chain
+    from algovoi_secure_hub.service import _audit_key, _verify_audit_chain
     import hashlib
     import hmac
     import json
 
     body = {"seq": 0, "action": "policy_bind", "detail": {"subject_ref": "x", "policy_ref": "y"}, "prev": ""}
-    mac = hmac.new(_AUDIT_KEY, json.dumps(body, sort_keys=True).encode(), hashlib.sha256).hexdigest()
+    mac = hmac.new(_audit_key(), json.dumps(body, sort_keys=True).encode(), hashlib.sha256).hexdigest()
     entry = {**body, "mac": mac}
     assert _verify_audit_chain([entry]) is True
     tampered = {**entry, "detail": {"x": 2}}
@@ -240,8 +259,19 @@ def test_audit_chain_verification_detects_tampering():
     assert _verify_audit_chain([{"seq": 0, "action": "test", "detail": None, "prev": "", "mac": ""}]) is False
 
 
-def test_http_panel_login_does_not_require_secure_cookie_by_default(client):
-    response = client.post("/login", data={"password": _ADMIN_TOKEN}, follow_redirects=False)
+def test_http_panel_login_sets_secure_cookie_by_default(client):
+    # Secure + HttpOnly by default; the session cookie must not be sent over plain HTTP.
+    response = client.post("/login", data={"password": _admin_token()}, follow_redirects=False)
+    assert response.status_code == 303
+    set_cookie = response.headers["set-cookie"]
+    assert "Secure" in set_cookie
+    assert "HttpOnly" in set_cookie
+
+
+def test_http_panel_login_secure_cookie_can_be_disabled_for_plain_http(client, monkeypatch):
+    # Plain-HTTP deployments opt out explicitly; the default stays secure.
+    monkeypatch.setenv("AHUB_COOKIE_SECURE", "0")
+    response = client.post("/login", data={"password": _admin_token()}, follow_redirects=False)
     assert response.status_code == 303
     assert "Secure" not in response.headers["set-cookie"]
 
@@ -451,8 +481,8 @@ def test_scoped_addon_token_cannot_change_existing_registration(client, admin_he
     import algovoi_secure_hub.service as service
 
     token = secrets.token_urlsafe(32)
-    monkeypatch.setattr(service, "_REGISTRATION_TOKEN", token)
-    monkeypatch.setattr(service, "_REGISTRATION_NAME", "scoped-addon")
+    monkeypatch.setattr(service, "_registration_config",
+                        lambda: {"token": token, "name": "scoped-addon", "tokens": {}})
     body = {"name": "scoped-addon", "type": "addon", "base_url": "http://127.0.0.1:31"}
     scoped_headers = {"Authorization": f"Bearer {token}"}
     assert client.post("/v1/services", json=body, headers=scoped_headers).status_code == 200
@@ -616,3 +646,32 @@ def test_bridge_e2e_script_is_strict_and_checks_expected_services():
     assert "| head -c" not in script
     assert "federation-validator" in script
     assert "zkp-receipt" in script
+
+
+def test_importing_service_module_does_not_bootstrap_secrets(tmp_path):
+    """Importing the module must not bootstrap secrets.
+
+    The secret bootstrap used to run at module top level, so a bare `import`
+    created `admin_token`/`audit_key` under the data dir -- and raised on a weak
+    token or Windows ACL verification -- before `main()` ever ran, making the
+    module impossible to import for tests, tooling or docs builds. Secrets must
+    be created lazily on first use instead. (The persistent store may still
+    create its own DB directory at import; only the secret files are at issue.)
+    """
+    import subprocess as _sp, sys as _sys, os as _os, pathlib as _pl
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    env = {k: v for k, v in _os.environ.items() if not k.startswith("AHUB_")}
+    env["AHUB_DATA_DIR"] = str(data_dir)          # writable, but NO admin/audit tokens set
+    env["PYTHONPATH"] = _os.pathsep.join([
+        str(_pl.Path(__file__).parents[1] / "src"),
+        str(_pl.Path(__file__).parents[1]),
+    ])
+    proc = _sp.run(
+        [_sys.executable, "-c", "import algovoi_secure_hub.service; print('IMPORT_OK')"],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 0, "import raised:\n" + proc.stderr
+    assert "IMPORT_OK" in proc.stdout
+    assert not (data_dir / "admin_token").exists(), "import bootstrapped admin_token"
+    assert not (data_dir / "audit_key").exists(), "import bootstrapped audit_key"

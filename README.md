@@ -266,6 +266,8 @@ The returned `kid` is `SHA-256(public_key_bytes)[:16]`, computed by the hub — 
 | `AHUB_REGISTRATION_TOKENS` | JSON name → scoped registration token map |
 | `AHUB_REGISTRATION_TOKEN` / `AHUB_REGISTRATION_NAME` | Single scoped registration credential |
 | `AHUB_BIND` | Bind address, default `0.0.0.0:8094` |
+| `AHUB_COOKIE_SECURE` | Session cookie `Secure` flag; **on by default**, set `0` only for plain-HTTP deployments |
+| `AHUB_PROBE_ALLOW_LOOPBACK` | Allow posture probes to reach loopback (`127.0.0.1`); **off by default** as an SSRF defence. Relaxes loopback only — link-local and cloud-metadata ranges stay blocked |
 | `AHUB_EDGE_TOKEN` | Edge: HMAC pre-auth token |
 | `AHUB_EDGE_RPM` | Edge: per-IP requests-per-minute ceiling |
 | `AHUB_EDGE_GEO_BLOCK` | Edge: comma-separated ISO country codes to block |
