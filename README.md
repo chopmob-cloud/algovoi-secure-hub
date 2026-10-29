@@ -213,7 +213,7 @@ Both refs must be `sha256:` + 64 hex. The hub rejects anything else at the bound
 Registering an issuer requires a real **Falcon-1024** public key, base64-encoded. The hub enforces the exact size (`public key must be 1793 bytes`) and derives the key id itself.
 
 ```bash
-pip install pqcrypto
+pip install "pqcrypto==0.4.0"     # see the pin note below
 ```
 
 ```python
@@ -222,9 +222,17 @@ from pqcrypto.sign.falcon_1024 import generate_keypair   # PQClean-backed
 
 pk, sk = generate_keypair()
 assert len(pk) == 1793, len(pk)     # Falcon-1024 public key is exactly 1793 bytes
-print(base64.b64encode(pk).decode())   # -> public_key_b64
-# keep sk offline; the hub never needs it
+assert len(sk) == 2305             # secret key; keep it offline, the hub never needs it
+print(base64.b64encode(pk).decode())   # -> public_key_b64 (2392 chars)
 ```
+
+> **Pin `pqcrypto==0.4.0`.** Verified on both Linux and Windows: 0.4.0 produces a
+> 1793-byte public key and a 2305-byte secret key. Version **1.0.0 ships no sign
+> or kem modules at all**, so `from pqcrypto.sign.falcon_1024 import
+> generate_keypair` raises `ModuleNotFoundError` — it looks like a packaging
+> regression rather than an API change. Check the import resolves before relying
+> on it, and never paste an arbitrary 1793-byte blob: it passes the size check
+> but nothing will ever verify against it.
 
 ```bash
 curl -sX POST http://localhost:8094/v1/issuers \
@@ -232,7 +240,7 @@ curl -sX POST http://localhost:8094/v1/issuers \
   -d '{"did":"did:web:issuer.example","public_key_b64":"<1793-byte key, base64>"}'
 ```
 
-The returned `kid` is `SHA-256(public_key_bytes)[:16]`, computed by the hub — you never supply it. Confirm the pairing by regenerating the key and checking the `kid` matches.
+The returned `kid` is `SHA-256(public_key_bytes)[:16]`, computed by the hub — you never supply it. That derivation is verified end to end: a key generated with `pqcrypto==0.4.0` registered as `kid 1bde4858bf37b12f`, exactly matching the local recomputation of `SHA-256(pk)[:16]`.
 
 > **Verify the import before relying on it.** Some `pqcrypto` builds ship without the compiled sign modules, in which case `from pqcrypto.sign.falcon_1024 import generate_keypair` raises `ImportError`. If that happens, use your existing ATB/issuer tooling. Do not paste an arbitrary 1793-byte blob: it passes the size check but nothing will ever verify against it.
 
