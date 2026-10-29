@@ -19,13 +19,13 @@ The registry coordinates metadata and posture only; it does not canonicalise, se
 
 The panel is server-side rendered — no build step, no external assets, no CDN. It ships one dark theme, shared token-for-token with the Keystone control panel, so an operator moving between the two sees the same product.
 
-![AlgoVoi Secure Hub dashboard](docs/screenshots/secure-hub-dashboard.png)
-
-*Live posture: registered services and their health, the active policy bridge with its content-addressed `policy_ref`, the issuer trust set, and audit depth. Auto-refresh every 10s.*
-
 ![AlgoVoi Secure Hub sign-in](docs/screenshots/secure-hub-login.png)
 
 *The sign-in gate. The password is `AHUB_ADMIN_TOKEN`; the session is a signed cookie, not a bearer header.*
+
+![AlgoVoi Secure Hub dashboard](docs/screenshots/secure-hub-dashboard.png)
+
+*Live posture: registered services and their health, the active policy bridge with its content-addressed `policy_ref`, the issuer trust set, and audit depth. Auto-refresh every 10s.*
 
 ## Install and run
 
