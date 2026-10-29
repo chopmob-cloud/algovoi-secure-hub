@@ -25,7 +25,7 @@ for _legacy_key, _legacy_value in list(os.environ.items()):
 
 from typing import Any
 
-from substrate2.policy_binding import policy_bound_ref, policy_ref  # type: ignore[reportMissingImports]
+from algovoi_policy_binding import policy_bound_ref, policy_ref
 
 
 def _default_dsn() -> str:

@@ -54,7 +54,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from substrate2.policy_binding import policy_bound_ref, policy_ref
+from algovoi_policy_binding import policy_bound_ref, policy_ref
 
 from algovoi_secure_hub import __version__
 from algovoi_secure_hub.edge import edge_middleware, edge_stats
@@ -481,7 +481,12 @@ def _audit_state_matches(entries: list[dict], current_state: dict | None = None)
                     continue
                 if detail["policy_ref"] != active_policy_ref:
                     return False
-                if policy_bound_ref(detail["subject_ref"], detail["policy_ref"]) != detail["bound_ref"]:
+                try:
+                    recomputed = policy_bound_ref(detail["subject_ref"], detail["policy_ref"])
+                except ValueError:
+                    # A record whose stored refs no longer validate cannot be trusted.
+                    return False
+                if recomputed != detail["bound_ref"]:
                     return False
             elif action == "keystone_attestor_set":
                 if set(detail) != {"did", "jwk", "kid", "set_at"}:
@@ -1074,7 +1079,8 @@ class PolicyIn(BaseModel):
 
 
 class BindIn(BaseModel):
-    subject_ref: str = Field(..., description='A frozen subject ref ("sha256:<hex>") — a binding_ref or retention_chain_ref.')
+    subject_ref: str = Field(..., pattern=r"^sha256:[0-9a-f]{64}$",
+                         description='A frozen subject ref ("sha256:<hex>") — a binding_ref or retention_chain_ref.')
 
 
 def _validate_keystone_attestor(did: str, jwk: dict, kid: str) -> None:
@@ -1568,7 +1574,7 @@ async def get_policy() -> dict:
 @app.post("/v1/policy")
 async def set_policy(body: PolicyIn, authorization: Annotated[str | None, Header()] = None) -> dict:
     """Set the active policy snapshot. Computes its content-addressed ``policy_ref``
-    (substrate2.policy_binding) and persists it; records seal under this ref so a
+    (algovoi.policy_binding) and persists it; records seal under this ref so a
     later silent rotation is detectable. Admin only."""
     global _policy, _policy_bound_count
     _require_admin(authorization)

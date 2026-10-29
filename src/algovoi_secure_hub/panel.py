@@ -13,20 +13,21 @@ import html
 
 
 _CSS = """
-:root{--bg:#0a0e17;--card:#111827;--line:#1e2a3a;--fg:#f1f5f9;--mut:#94a3b8;--ok:#10b981;--bad:#ef4444;--accent:#3b82f6;--ok-bg:rgba(16,185,129,.08);--bad-bg:rgba(239,68,68,.08)}
+:root{--bg:#0a0e17;--card:#111827;--line:#1e2a3a;--fg:#f1f5f9;--mut:#94a3b8;--ok:#10b981;--bad:#ef4444;--accent:#3b82f6;--warn:#f59e0b;--ok-bg:rgba(16,185,129,.08);--bad-bg:rgba(239,68,68,.08);--warn-bg:rgba(245,158,11,.08)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 .mono,code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
-.topbar{background:var(--card);border-bottom:1px solid var(--line);padding:0 32px;display:flex;align-items:center;gap:12px;height:52px;position:sticky;top:0;z-index:10}
+.topbar{background:var(--card);border-bottom:1px solid var(--line);padding:0 32px;display:flex;align-items:center;gap:12px;height:52px}
 .tb-brand{font-size:15px;font-weight:600;letter-spacing:-.015em}.tb-dim{color:var(--mut);font-weight:400}
-.tb-ver{color:var(--mut);font-size:12px;background:rgba(255,255,255,.05);padding:2px 8px;border-radius:6px}
-.tb-spacer{flex:1}.tb-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.tb-dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg)}
-.tb-dot.err{background:var(--bad);box-shadow:0 0 0 3px var(--bad-bg)}
-.tb-msg{font-size:12px;color:var(--mut)}
+.tb-pill{font-size:11px;padding:2px 8px;border-radius:6px;font-weight:500}
+.tb-pill.open{background:var(--ok-bg);color:var(--ok)}
+.tb-spacer{flex:1}
+.tb-count{color:var(--mut);font-size:12px}
+.tb-link{color:var(--mut);font-size:12px;text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--line);margin-left:8px}
+.tb-link:hover{color:var(--fg);border-color:var(--fg)}
 .wrap{max-width:1120px;margin:0 auto;padding:28px 24px 60px}
 .sub{color:var(--mut);font-size:12px;margin-bottom:24px}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .stat .n{font-size:28px;font-weight:700;letter-spacing:-.025em;line-height:1.1}
 .stat .l{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-top:5px}
@@ -37,10 +38,30 @@ th{color:var(--mut);font-weight:500;font-size:11px;text-transform:uppercase;lett
 td{padding:10px;font-size:13px;border-bottom:1px solid rgba(30,42,58,.6);vertical-align:top}
 tr:last-child td{border-bottom:none}tr:hover td{background:rgba(255,255,255,.02)}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.ok{background:var(--ok-bg);color:var(--ok)}.missing{background:var(--warn-bg);color:var(--warn)}.custom{background:var(--accent-bg,rgba(59,130,246,.08));color:var(--accent)}
+.badge.ok::before,.badge.custom::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.mono{color:var(--accent);word-break:break-all}.mut{color:var(--mut)}
+button{cursor:pointer;padding:7px 16px;border-radius:8px;font:500 13px system-ui,sans-serif;border:none;transition:opacity .15s}
+button:hover{opacity:.85}
+button.primary{background:var(--accent);color:#fff}
+button.secondary{background:rgba(59,130,246,.1);color:var(--accent);border:1px solid rgba(59,130,246,.2)}
+button.ghost{background:transparent;color:var(--mut);border:1px solid var(--line)}
+button.danger{background:transparent;color:var(--bad);border:1px solid rgba(239,68,68,.2);font-size:12px;padding:4px 10px}
+button.tune{background:transparent;color:var(--accent);border:1px solid rgba(59,130,246,.2);font-size:12px;padding:4px 12px;border-radius:6px}
+textarea{width:100%;height:260px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--fg);font:12px ui-monospace,Menlo,Consolas,monospace;padding:12px;margin-top:8px;resize:vertical;outline:none;transition:border-color .15s}
+textarea:focus{border-color:var(--accent)}
+.row{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}.msg{color:var(--mut);font-size:12px;flex:1}
+.foot{color:var(--mut);font-size:12px;padding-top:16px;border-top:1px solid var(--line)}
+/* ── hub-only components (same tokens as keystone-control) ───────────────── */
+.topbar{position:sticky;top:0;z-index:10}
+.tb-ver{color:var(--mut);font-size:12px;background:rgba(255,255,255,.05);padding:2px 8px;border-radius:6px}
+.tb-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.tb-dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg)}
+.tb-dot.err{background:var(--bad);box-shadow:0 0 0 3px var(--bad-bg)}
+.tb-msg{font-size:12px;color:var(--mut)}
+.grid.four{grid-template-columns:repeat(4,1fr)}
 .up{background:var(--ok-bg);color:var(--ok)}.down{background:var(--bad-bg);color:var(--bad)}
 .badge.up::before,.badge.down::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
-.mono{color:var(--accent);word-break:break-all}.mut{color:var(--mut)}
-.foot{color:var(--mut);font-size:12px;padding-top:16px;border-top:1px solid var(--line)}
 .foot a{color:var(--mut);text-decoration:none}.foot a:hover{color:var(--fg)}
 .ks-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(59,130,246,.08);color:var(--accent);border:1px solid rgba(59,130,246,.22);border-radius:8px;font:500 13px system-ui,sans-serif;text-decoration:none;transition:background .15s,border-color .15s;white-space:nowrap}
 .ks-btn:hover{background:rgba(59,130,246,.16);border-color:rgba(59,130,246,.4);color:var(--accent)}
@@ -107,7 +128,7 @@ def render_panel(*, version: str, issuers: list[dict], services: list[dict],
                f"<tr><th>policy</th><td>{e(str(policy.get('label','')))}</td></tr>"
                f"<tr><th>policy_ref</th><td class='mono'>{e(policy.get('policy_ref',''))}</td></tr>"
                f"<tr><th>bound</th><td class='mut'>{e(str(policy.get('bound_count',0)))} subject(s) bound this session</td></tr>"
-               f"<tr><th>spec</th><td class='mut'>draft-hopley-x402-retention-chain-04 §7.7 · substrate2.policy_binding</td></tr></table>")
+               f"<tr><th>spec</th><td class='mut'>draft-hopley-x402-retention-chain-04 §7.7 · algovoi.policy_binding</td></tr></table>")
     else:
         pol = ("<p class='mut'>Policy bridge is built-in and ready. No active policy set — "
                "POST a policy document to <code>/v1/policy</code> (admin) to seal records under a "
@@ -151,7 +172,7 @@ def render_panel(*, version: str, issuers: list[dict], services: list[dict],
 </div>
 <div class=wrap>
 <div class=sub>Control plane · live posture across the federation · ZK-proof · ATB · policy bridge · auto-refresh 10s</div>
-<div class=grid>
+<div class="grid four">
   <div class=stat><div class=n>{len(services)}</div><div class=l>Services</div></div>
   <div class=stat><div class=n>{up_n}/{len(targets)}</div><div class=l>Healthy targets</div></div>
   <div class=stat><div class=n>{len(issuers)}</div><div class=l>Issuers</div></div>
