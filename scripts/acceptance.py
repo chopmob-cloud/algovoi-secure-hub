@@ -42,12 +42,12 @@ def main() -> int:
     from fastapi.testclient import TestClient
 
     c = TestClient(m.app)
-    admin = {"Authorization": "Bearer " + m._ADMIN_TOKEN}
+    admin = {"Authorization": "Bearer " + m._admin_token()}
 
     print("STEP 1 - bootstrap (no config) -> healthy, empty registry")
     h = c.get("/health").json()
     check("service healthy", h["status"] == "ok")
-    check("admin token auto-generated", isinstance(m._ADMIN_TOKEN, str) and len(m._ADMIN_TOKEN) > 20)
+    check("admin token auto-generated", isinstance(m._admin_token(), str) and len(m._admin_token()) > 20)
     check("empty registry on first run", h["issuer_count"] == 0 and h["service_count"] == 0)
 
     print("STEP 2 - issuer trust registry + the three hub shapes")

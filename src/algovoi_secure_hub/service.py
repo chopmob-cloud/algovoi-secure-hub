@@ -185,12 +185,45 @@ def _bootstrap_secret(env_name: str, file_name: str) -> str:
         raise RuntimeError(f"unable to securely persist {file_name}") from exc
 
 
-_ADMIN_TOKEN = _bootstrap_secret("AHUB_ADMIN_TOKEN", "admin_token")
-_AUDIT_KEY = _bootstrap_secret("AHUB_AUDIT_KEY", "audit_key").encode()
-if hmac.compare_digest(_ADMIN_TOKEN.encode(), _AUDIT_KEY):
-    raise RuntimeError("AHUB_ADMIN_TOKEN and AHUB_AUDIT_KEY must be distinct")
-# Derive a dedicated session-signing key so a compromised audit key cannot forge sessions.
-_SESSION_KEY = hmac.new(_AUDIT_KEY, b"ahub-session-signing-v1", hashlib.sha256).digest()
+# Secrets are bootstrapped lazily, never at import time. Running the bootstrap at
+# module scope created `admin_token`/`audit_key` on disk (and raised on a weak token
+# or Windows ACL verification) merely because something imported the module -- which
+# broke tests, tooling and docs builds. `_runtime_secrets()` initialises them once,
+# on first use (first request / `main()`), under a lock, and caches the result.
+_SECRETS_LOCK = threading.Lock()
+_SECRETS: dict | None = None
+
+
+def _runtime_secrets() -> dict:
+    global _SECRETS
+    if _SECRETS is None:
+        with _SECRETS_LOCK:
+            if _SECRETS is None:
+                admin = _bootstrap_secret("AHUB_ADMIN_TOKEN", "admin_token")
+                audit = _bootstrap_secret("AHUB_AUDIT_KEY", "audit_key").encode()
+                if hmac.compare_digest(admin.encode(), audit):
+                    raise RuntimeError("AHUB_ADMIN_TOKEN and AHUB_AUDIT_KEY must be distinct")
+                # Dedicated session-signing key: a compromised audit key cannot forge sessions.
+                session = hmac.new(audit, b"ahub-session-signing-v1", hashlib.sha256).digest()
+                reg = _load_registration_config(admin)
+                _SECRETS = {"admin": admin, "audit": audit, "session": session, "registration": reg}
+    return _SECRETS
+
+
+def _admin_token() -> str:
+    return _runtime_secrets()["admin"]
+
+
+def _audit_key() -> bytes:
+    return _runtime_secrets()["audit"]
+
+
+def _session_key() -> bytes:
+    return _runtime_secrets()["session"]
+
+
+def _registration_config() -> dict:
+    return _runtime_secrets()["registration"]
 
 
 def _verify_audit_chain(entries: list[dict]) -> bool:
@@ -207,7 +240,7 @@ def _verify_audit_chain(entries: list[dict]) -> bool:
             body = {"seq": entry["seq"], "action": entry["action"],
                     "detail": entry["detail"], "prev": entry["prev"]}
             expected_mac = hmac.new(
-                _AUDIT_KEY, json.dumps(body, sort_keys=True).encode(), hashlib.sha256
+                _audit_key(), json.dumps(body, sort_keys=True).encode(), hashlib.sha256
             ).hexdigest()
             if not hmac.compare_digest(entry.get("mac", ""), expected_mac):
                 return False
@@ -575,7 +608,7 @@ _policy_bound_count = 0
 def _audit_append(action: str, detail: dict) -> None:
     global _AUDIT_INTEGRITY_OK, _audit
     _require_audit_integrity()
-    entry = _store.audit_append(action, detail, _AUDIT_KEY)
+    entry = _store.audit_append(action, detail, _audit_key())
     try:
         _audit = _store.audit_load()
         _write_audit_anchor(_audit)
@@ -654,50 +687,59 @@ def _refresh_persisted_state() -> None:
 
 def _require_admin(authorization: str | None) -> None:
     token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else None
-    if not token or not hmac.compare_digest(token, _ADMIN_TOKEN):
+    if not token or not hmac.compare_digest(token, _admin_token()):
         raise HTTPException(status_code=401, detail="admin bearer token required")
 
 
 
 
-_REGISTRATION_TOKEN = os.environ.get("AHUB_REGISTRATION_TOKEN", "")
-_REGISTRATION_NAME = os.environ.get("AHUB_REGISTRATION_NAME", "").strip()
-try:
-    _REGISTRATION_TOKENS = json.loads(os.environ.get("AHUB_REGISTRATION_TOKENS", "{}"))
-    if not isinstance(_REGISTRATION_TOKENS, dict) or any(not isinstance(k, str) or not isinstance(v, str) or not k or not v for k, v in _REGISTRATION_TOKENS.items()):
-        raise ValueError
-except (TypeError, ValueError, json.JSONDecodeError) as exc:
-    raise RuntimeError("AHUB_REGISTRATION_TOKENS must be a JSON object mapping service names to tokens") from exc
-if len(set(_REGISTRATION_TOKENS.values())) != len(_REGISTRATION_TOKENS):
-    raise RuntimeError("AHUB_REGISTRATION_TOKENS values must be unique")
 def _validate_registration_credential(value: str, source: str) -> None:
     if len(value) < 16 or len(set(value)) < 8:
         raise RuntimeError(f"{source} must contain at least 16 characters with varied entropy")
 
 
-if _REGISTRATION_TOKEN:
-    _validate_registration_credential(_REGISTRATION_TOKEN, "AHUB_REGISTRATION_TOKEN")
-for _registration_name, _registration_value in _REGISTRATION_TOKENS.items():
-    _validate_registration_credential(_registration_value, f"AHUB_REGISTRATION_TOKENS[{_registration_name!r}]")
-if hmac.compare_digest(_REGISTRATION_TOKEN, _ADMIN_TOKEN) or _REGISTRATION_TOKEN in _REGISTRATION_TOKENS.values() or any(hmac.compare_digest(token, _ADMIN_TOKEN) for token in _REGISTRATION_TOKENS.values()):
-    raise RuntimeError("registration credentials must not equal the admin token")
-if _REGISTRATION_TOKEN and not _REGISTRATION_NAME:
-    raise RuntimeError("AHUB_REGISTRATION_NAME is required with AHUB_REGISTRATION_TOKEN")
+def _load_registration_config(admin_token: str) -> dict:
+    """Parse and validate the service-registration env config once, lazily.
+
+    Kept out of import time with the secrets: it reads env, raises on malformed
+    config, and cross-checks against the admin token, so running it at module
+    scope made a bad env fail on import rather than at startup.
+    """
+    reg_token = os.environ.get("AHUB_REGISTRATION_TOKEN", "")
+    reg_name = os.environ.get("AHUB_REGISTRATION_NAME", "").strip()
+    try:
+        reg_tokens = json.loads(os.environ.get("AHUB_REGISTRATION_TOKENS", "{}"))
+        if not isinstance(reg_tokens, dict) or any(not isinstance(k, str) or not isinstance(v, str) or not k or not v for k, v in reg_tokens.items()):
+            raise ValueError
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("AHUB_REGISTRATION_TOKENS must be a JSON object mapping service names to tokens") from exc
+    if len(set(reg_tokens.values())) != len(reg_tokens):
+        raise RuntimeError("AHUB_REGISTRATION_TOKENS values must be unique")
+    if reg_token:
+        _validate_registration_credential(reg_token, "AHUB_REGISTRATION_TOKEN")
+    for _registration_name, _registration_value in reg_tokens.items():
+        _validate_registration_credential(_registration_value, f"AHUB_REGISTRATION_TOKENS[{_registration_name!r}]")
+    if hmac.compare_digest(reg_token, admin_token) or reg_token in reg_tokens.values() or any(hmac.compare_digest(token, admin_token) for token in reg_tokens.values()):
+        raise RuntimeError("registration credentials must not equal the admin token")
+    if reg_token and not reg_name:
+        raise RuntimeError("AHUB_REGISTRATION_NAME is required with AHUB_REGISTRATION_TOKEN")
+    return {"token": reg_token, "name": reg_name, "tokens": reg_tokens}
 
 
 def _require_service_registration(authorization: str | None, name: str | None = None, type_: str | None = None) -> bool:
     token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else None
     if not token:
         raise HTTPException(status_code=401, detail="service registration bearer token required")
-    if hmac.compare_digest(token, _ADMIN_TOKEN):
+    if hmac.compare_digest(token, _admin_token()):
         if type_ == "addon":
             raise HTTPException(status_code=403, detail="addon registration requires a scoped registration token")
         return True
     if type_ != "addon":
         raise HTTPException(status_code=403, detail="scoped registration tokens may only register type 'addon'")
-    if _REGISTRATION_TOKEN and hmac.compare_digest(token, _REGISTRATION_TOKEN) and name == _REGISTRATION_NAME:
+    reg = _registration_config()
+    if reg["token"] and hmac.compare_digest(token, reg["token"]) and name == reg["name"]:
         return False
-    if name and name in _REGISTRATION_TOKENS and hmac.compare_digest(token, _REGISTRATION_TOKENS[name]):
+    if name and name in reg["tokens"] and hmac.compare_digest(token, reg["tokens"][name]):
         return False
     raise HTTPException(status_code=401, detail="service registration bearer token required")
 
@@ -769,7 +811,7 @@ _AUTH_OPEN = {"/health", "/login", "/logout"}
 
 def _make_session(now_s: int, ttl_s: int = _SESSION_TTL_S) -> str:
     exp = now_s + ttl_s
-    mac = hmac.new(_SESSION_KEY, f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
+    mac = hmac.new(_session_key(), f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
     return f"{exp}.{mac}"
 
 
@@ -781,7 +823,7 @@ def _session_ok(cookie: str, now_s: int) -> bool:
         return False
     if now_s >= exp:
         return False
-    expected = hmac.new(_SESSION_KEY, f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
+    expected = hmac.new(_session_key(), f"s2cp-session-v2|{exp}".encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(mac, expected)
 # SECURITY (2026-08-19): the read-only trust-consumption endpoints expose ONLY published public keys and
 # DIDs (the trust anchors bridged consumers are documented to fetch — FEDERATION_ISSUER_PKS, the atb hub
@@ -805,7 +847,7 @@ def _is_authed(request) -> bool:
     if c and _session_ok(c, int(time.time())):
         return True
     auth = request.headers.get("authorization", "")
-    return auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), _ADMIN_TOKEN)
+    return auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), _admin_token())
 
 
 def _request_rate_allowed(request, bucket: str, limit: int) -> bool:
@@ -882,8 +924,9 @@ async def _login_gate(request, call_next):
         _tok = request.headers["authorization"][7:].strip()
         # Compare against every token unconditionally (no short-circuit) to avoid timing
         # side-channels that reveal how many or which tokens are configured.
-        _results = [hmac.compare_digest(_tok, _REGISTRATION_TOKEN)] if _REGISTRATION_TOKEN else []
-        _results += [hmac.compare_digest(_tok, v) for v in _REGISTRATION_TOKENS.values()]
+        _reg = _registration_config()
+        _results = [hmac.compare_digest(_tok, _reg["token"])] if _reg["token"] else []
+        _results += [hmac.compare_digest(_tok, v) for v in _reg["tokens"].values()]
         _tok_ok = any(_results)
         if _tok_ok:
             authenticated = True
@@ -927,7 +970,7 @@ async def login_page(e: int = 0) -> HTMLResponse:
 
 @app.post("/login")
 async def login_submit(password: Annotated[str, _Form()] = "") -> Any:
-    if hmac.compare_digest(password, _ADMIN_TOKEN):
+    if hmac.compare_digest(password, _admin_token()):
         r = _Redirect("/", status_code=303)
         secure_cookie = os.environ.get("AHUB_COOKIE_SECURE", "1").strip().lower() not in {"0", "false", "no"}
         r.set_cookie(_SESSION_COOKIE, _make_session(int(time.time())), httponly=True, secure=secure_cookie,
@@ -1185,7 +1228,7 @@ async def add_issuer(body: IssuerIn, authorization: Annotated[str | None, Header
     detail = {"did": body.did, **rec}
     try:
         entry = _store.issuer_add_with_audit(
-            body.did, rec["pk_b64"], rec["kid"], rec["added_at"], "issuer_add", detail, _AUDIT_KEY
+            body.did, rec["pk_b64"], rec["kid"], rec["added_at"], "issuer_add", detail, _audit_key()
         )
     except ValueError as exc:
         _refresh_persisted_state()
@@ -1210,7 +1253,7 @@ async def revoke_issuer(did: str, authorization: Annotated[str | None, Header()]
     previous = _issuers[did]
     detail = {"did": did, **previous}
     try:
-        entry = _store.issuer_remove_with_audit(did, "issuer_revoke", detail, _AUDIT_KEY)
+        entry = _store.issuer_remove_with_audit(did, "issuer_revoke", detail, _audit_key())
     except KeyError as exc:
         _refresh_persisted_state()
         raise HTTPException(status_code=404, detail="unknown issuer") from exc
@@ -1283,7 +1326,7 @@ async def register_service(body: ServiceIn, authorization: Annotated[str | None,
     try:
         entry = _store.service_register_with_audit(
             body.name, svc["type"], svc["base_url"], svc["health_path"], svc["registered_at"],
-            "service_register", detail, _AUDIT_KEY, immutable=not is_admin,
+            "service_register", detail, _audit_key(), immutable=not is_admin,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail="stale service registration") from exc
@@ -1310,7 +1353,7 @@ async def remove_service(name: str, authorization: Annotated[str | None, Header(
         raise HTTPException(status_code=404, detail="unknown service")
     detail = {"name": name, **_services[name]}
     try:
-        entry = _store.service_remove_with_audit(name, "service_remove", detail, _AUDIT_KEY)
+        entry = _store.service_remove_with_audit(name, "service_remove", detail, _audit_key())
     except KeyError as exc:
         _refresh_persisted_state()
         raise HTTPException(status_code=404, detail="unknown service") from exc
@@ -1335,7 +1378,7 @@ async def register_substrate(body: SubstrateIn,
     record["registered_at"] = int(time.time())
     detail = {"name": body.name, **record}
     try:
-        entry = _store.substrate_register_with_audit(body.name, record, "substrate_register", detail, _AUDIT_KEY)
+        entry = _store.substrate_register_with_audit(body.name, record, "substrate_register", detail, _audit_key())
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail="stale substrate registration") from exc
     if entry is None:
@@ -1359,7 +1402,7 @@ async def remove_substrate(name: str,
     record = _substrates[name]
     detail = {"name": name, **record}
     try:
-        entry = _store.substrate_remove_with_audit(name, "substrate_remove", detail, _AUDIT_KEY)
+        entry = _store.substrate_remove_with_audit(name, "substrate_remove", detail, _audit_key())
     except KeyError as exc:
         _refresh_persisted_state()
         raise HTTPException(status_code=404, detail="unknown substrate") from exc
@@ -1397,9 +1440,16 @@ def _probe_address_allowed(ip: ipaddress._BaseAddress) -> bool:
         ipaddress.ip_network("168.63.129.16/32"),
         ipaddress.ip_network("fd00:ec2::/64"),
     )
+    # Loopback is refused by default so the hub cannot be steered into probing
+    # itself or another service bound only to localhost. Deployments that run an
+    # addon co-located on 127.0.0.1 may opt in with AHUB_PROBE_ALLOW_LOOPBACK=1.
+    # The opt-in relaxes loopback ONLY -- link-local, multicast, unspecified,
+    # reserved and the cloud-metadata ranges above stay blocked unconditionally.
+    allow_loopback = os.environ.get("AHUB_PROBE_ALLOW_LOOPBACK", "").strip().lower() in {"1", "true", "yes"}
+    if ip.is_loopback and not allow_loopback:
+        return False
     return not (
         ip.is_link_local
-        or ip.is_loopback
         or ip.is_multicast
         or ip.is_unspecified
         or ip.is_reserved
@@ -1587,7 +1637,7 @@ async def set_policy(body: PolicyIn, authorization: Annotated[str | None, Header
                   "set_at": int(time.time())}
     detail = {"policy_ref": ref, "label": body.label, "set_at": new_policy["set_at"]}
     try:
-        entry = _store.kv_set_with_audit("active_policy", new_policy, "policy_set", detail, _AUDIT_KEY)
+        entry = _store.kv_set_with_audit("active_policy", new_policy, "policy_set", detail, _audit_key())
     except RuntimeError as exc:
         _refresh_persisted_state()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1614,7 +1664,7 @@ async def bind_policy(body: BindIn, authorization: Annotated[str | None, Header(
     try:
         entry = _store.policy_bind_with_audit(
             body.subject_ref, bound_policy_ref,
-            {"subject_ref": body.subject_ref, "policy_ref": bound_policy_ref, "bound_ref": bound}, _AUDIT_KEY,
+            {"subject_ref": body.subject_ref, "policy_ref": bound_policy_ref, "bound_ref": bound}, _audit_key(),
         )
     except RuntimeError as exc:
         _refresh_persisted_state()
@@ -1648,7 +1698,7 @@ async def set_keystone_attestor(body: KeystoneAttestorIn,
     new_attestor = {"did": body.did, "jwk": body.jwk, "kid": body.kid, "set_at": int(time.time())}
     detail = {"did": body.did, "kid": body.kid, "jwk": body.jwk, "set_at": new_attestor["set_at"]}
     try:
-        entry = _store.kv_set_with_audit("keystone_attestor", new_attestor, "keystone_attestor_set", detail, _AUDIT_KEY)
+        entry = _store.kv_set_with_audit("keystone_attestor", new_attestor, "keystone_attestor_set", detail, _audit_key())
     except RuntimeError as exc:
         _refresh_persisted_state()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
