@@ -148,7 +148,7 @@ The VM2 run covered 19 integration checks: all eight applications registered, a 
 
 ```http
 POST /v1/services
-Authorization: Bearer <name-bound-scoped-token>
+Authorization: Bearer ${AHUB_ADMIN_TOKEN}
 Content-Type: application/json
 
 {"name":"my-security-app","type":"security-app","base_url":"http://my-security-app:8000","health_path":"/health"}
@@ -158,6 +158,28 @@ Content-Type: application/json
 4. Use `/v1/posture` and `/v1/services` only with the admin bearer; public trust reads are deliberately narrower and rate-limited.
 
 `examples/addon_app.py` is a complete Python template. Non-Python applications make the same HTTP calls and expose `/health`.
+
+### Worked example: algovoi-agent-guard (spend-authority bolt-on)
+
+[`algovoi-agent-guard`](https://github.com/chopmob-cloud/algovoi-agent-guard)
+([TypeScript](https://github.com/chopmob-cloud/algovoi-agent-guard-ts)) is the
+spend-mandate guard — human-signed spend caps with offline-verifiable receipts.
+It ships as a library with no HTTP surface, so `examples/agent_guard_addon.py`
+wraps it as a bolt-on: `GET /health` returns 200 only while a live enforcement
+self-check passes (an honest charge ALLOWs, a settled `charge_id` replay is
+DENIED, a forged human countersign is DENIED). The template self-registers as
+`type="addon"` with a scoped, name-bound token, exactly like `addon_app.py`.
+Registering as `type="security-app"` instead takes the admin bearer: scoped
+registration tokens are restricted to `type="addon"`, and the admin bearer is
+refused for `type="addon"`.
+
+Exercised against a live hub on VM2 on 2026-11-24 via that operator path
+(`type="security-app"`, admin bearer): the guard appeared in `/v1/services` and `/v1/posture`
+reported it `up:true` with the enforcement self-check passing (`all_up:true`).
+
+> **Three different "guards".** This is the *spend-authority* guard. It is not
+> the keystone-agent *behaviour* guard (`verify_agent_guard` / `behaviour_ref`),
+> and not the hub's own anomaly / circuit-breaker **Guard** middleware above.
 
 ## Keystone integration
 
